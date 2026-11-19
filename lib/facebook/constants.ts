@@ -1,0 +1,1 @@
+export const FACEBOOK_GRAPH_API_VERSION = 'v25.0';

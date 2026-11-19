@@ -1,0 +1,30 @@
+import { NextResponse } from 'next/server';
+import { ZodError } from 'zod';
+import { logError } from '@/lib/logging';
+
+export function handleErrorResponse(error: unknown): NextResponse {
+  logError('API error:', error);
+  if (error instanceof ZodError) {
+    return NextResponse.json({ error: error.issues }, { status: 400 });
+  }
+  return NextResponse.json(
+    { error: error instanceof Error ? error.message : String(error) },
+    { status: 500 },
+  );
+}
+
+export function handleDeprecatedEndpoint(newEndpoint: string, documentation: string): NextResponse {
+  return NextResponse.json(
+    {
+      status: 'DEPRECATED',
+      message: `This endpoint has been consolidated into ${newEndpoint}`,
+      migration: {
+        newEndpoint,
+        documentation,
+        deprecationDate: '2024-12-09',
+        removalDate: '2025-01-01',
+      },
+    },
+    { status: 410 },
+  );
+}

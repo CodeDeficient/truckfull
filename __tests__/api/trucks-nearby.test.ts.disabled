@@ -1,0 +1,279 @@
+/**
+ * Integration tests for /api/trucks/nearby route functions
+ * 
+ * Uses REAL database to ensure accurate behavior testing.
+ * Tests the helper functions directly to avoid NextRequest web API dependencies.
+ * 
+ * @jest-environment node
+ */
+import { describe, test, expect, beforeAll } from '@jest/globals';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+// Real Supabase client for database operations
+let supabase: SupabaseClient;
+
+// Known location (Augusta, GA area - where test data exists)
+const KNOWN_LAT = 33.4735;
+const KNOWN_LNG = -82.0105;
+const KNOWN_RADIUS_MILES = 50;
+
+beforeAll(async () => {
+  // Initialize real Supabase client with service role for RPC access
+  supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    }
+  );
+});
+
+/**
+ * Helper to enrich truck data with owner's subscription tier
+ * This mirrors the function in the route.ts file for testing
+ */
+async function enrichWithSubscriptionTiers(trucks: unknown[], supabaseClient: SupabaseClient) {
+  if (!trucks || !Array.isArray(trucks) || trucks.length === 0) return trucks;
+
+  try {
+    // Extract unique owner IDs
+    const ownerIds = [...new Set(trucks
+      .filter((t: any) => t.owner_id)
+      .map((t: any) => t.owner_id)
+    )];
+
+    if (ownerIds.length === 0) return trucks;
+
+    // Fetch profiles specifically for these owners
+    const { data: profiles, error } = await supabaseClient
+      .from('profiles')
+      .select('id, subscription_tier')
+      .in('id', ownerIds);
+
+    if (error || !profiles) {
+      return trucks;
+    }
+
+    // Create a lookup map
+    const tierMap = new Map(profiles.map((p: any) => [p.id, p.subscription_tier]));
+
+    // Merge tier into trucks
+    return trucks.map((truck: any) => ({
+      ...truck,
+      subscription_tier: truck.owner_id ? tierMap.get(truck.owner_id) : undefined
+    }));
+  } catch {
+    return trucks; // Return original data on error to prevent total failure
+  }
+}
+
+describe('trucks/nearby RPC function: find_trucks_within_radius', () => {
+  test('returns trucks within specified radius', async () => {
+    const radiusMeters = KNOWN_RADIUS_MILES * 1609.34;
+    
+    const { data, error } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: radiusMeters,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    expect(error).toBeNull();
+    expect(Array.isArray(data)).toBe(true);
+    
+    // Should find some trucks in Augusta, GA area
+    console.log(`Found ${data?.length || 0} trucks within ${KNOWN_RADIUS_MILES} miles of Augusta, GA`);
+  });
+
+  test('returns empty array for location with no nearby trucks', async () => {
+    // Middle of the Atlantic Ocean
+    const { data, error } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: 1609.34, // 1 mile
+      user_lat: 0,
+      user_lng: 0,
+    });
+
+    expect(error).toBeNull();
+    expect(Array.isArray(data)).toBe(true);
+    expect(data?.length).toBe(0);
+  });
+
+  test('respects radius parameter - larger radius returns more or equal trucks', async () => {
+    // Small radius - 5 miles
+    const { data: smallData } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: 5 * 1609.34,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    // Large radius - 100 miles
+    const { data: largeData } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: 100 * 1609.34,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    const smallCount = smallData?.length || 0;
+    const largeCount = largeData?.length || 0;
+
+    // Larger radius should return at least as many trucks
+    expect(largeCount).toBeGreaterThanOrEqual(smallCount);
+    console.log(`5 miles: ${smallCount} trucks, 100 miles: ${largeCount} trucks`);
+  });
+
+  test('returns trucks with distance_miles property', async () => {
+    const { data } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: KNOWN_RADIUS_MILES * 1609.34,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    if (data && data.length > 0) {
+      const truck = data[0];
+      expect(truck).toHaveProperty('distance_miles');
+      expect(typeof truck.distance_miles).toBe('number');
+      expect(truck.distance_miles).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('returns core truck properties', async () => {
+    const { data } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: KNOWN_RADIUS_MILES * 1609.34,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    if (data && data.length > 0) {
+      const truck = data[0];
+      
+      // Core properties that should be present from RPC
+      expect(truck).toHaveProperty('id');
+      expect(truck).toHaveProperty('name');
+      expect(typeof truck.id).toBe('string');
+      expect(typeof truck.name).toBe('string');
+    }
+  });
+});
+
+describe('enrichWithSubscriptionTiers helper function', () => {
+  test('returns original array for empty input', async () => {
+    const result = await enrichWithSubscriptionTiers([], supabase);
+    expect(result).toEqual([]);
+  });
+
+  test('returns original array for null/undefined input', async () => {
+    const result1 = await enrichWithSubscriptionTiers(null as any, supabase);
+    expect(result1).toBeNull();
+
+    const result2 = await enrichWithSubscriptionTiers(undefined as any, supabase);
+    expect(result2).toBeUndefined();
+  });
+
+  test('handles trucks without owner_id gracefully', async () => {
+    const trucksWithoutOwner = [
+      { id: 'test-1', name: 'Test Truck 1', owner_id: null },
+      { id: 'test-2', name: 'Test Truck 2', owner_id: undefined },
+    ];
+
+    const result = await enrichWithSubscriptionTiers(trucksWithoutOwner, supabase);
+    
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(2);
+    // Should not crash, subscription_tier should be undefined
+    expect((result as any[])[0].subscription_tier).toBeUndefined();
+    expect((result as any[])[1].subscription_tier).toBeUndefined();
+  });
+
+  test('enriches real trucks with subscription_tier from profiles', async () => {
+    // First get some real trucks from database
+    const { data: realTrucks } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 10,
+      radius_meters: KNOWN_RADIUS_MILES * 1609.34,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    if (!realTrucks || realTrucks.length === 0) {
+      console.log('No trucks found to test enrichment');
+      return;
+    }
+
+    const enriched = await enrichWithSubscriptionTiers(realTrucks, supabase);
+    
+    expect(Array.isArray(enriched)).toBe(true);
+    expect(enriched).toHaveLength(realTrucks.length);
+
+    // Count trucks with owners that got enriched
+    const trucksWithOwner = (enriched as any[]).filter(t => t.owner_id);
+    console.log(`${trucksWithOwner.length} of ${realTrucks.length} trucks have owner_id`);
+    
+    // Trucks WITH owner_id should have subscription_tier property added (even if undefined)
+    for (const truck of trucksWithOwner) {
+      expect('subscription_tier' in truck).toBe(true);
+    }
+    
+    const trucksWithTier = trucksWithOwner.filter(t => t.subscription_tier !== undefined);
+    console.log(`${trucksWithTier.length} of ${trucksWithOwner.length} trucks with owner have subscription_tier`);
+  });
+});
+
+describe('Data filtering logic', () => {
+  test('filters out blocked trucks (data_quality_score < 0)', async () => {
+    const { data: allTrucks } = await supabase.rpc('find_trucks_within_radius', {
+      max_results: 1000,
+      radius_meters: KNOWN_RADIUS_MILES * 1609.34,
+      user_lat: KNOWN_LAT,
+      user_lng: KNOWN_LNG,
+    });
+
+    if (!allTrucks) return;
+
+    // Apply the same filtering logic as the route
+    const filteredData = allTrucks.filter((t: any) => (t.data_quality_score ?? 0) >= 0);
+
+    // All filtered trucks should have non-negative quality scores
+    const hasBlockedTruck = filteredData.some((t: any) => {
+      const score = t.data_quality_score;
+      return typeof score === 'number' && score < 0;
+    });
+
+    expect(hasBlockedTruck).toBe(false);
+    console.log(`${filteredData.length} trucks after filtering (${allTrucks.length - filteredData.length} blocked)`);
+  });
+});
+
+describe('Cache utility functions', () => {
+  test('getCacheKey generates consistent keys for same inputs', () => {
+    // Test the cache key generation logic directly
+    const getCacheKey = (lat: number, lng: number, radiusMiles: number): string => {
+      return `nearby_${lat.toFixed(6)}_${lng.toFixed(6)}_${radiusMiles}_v2`;
+    };
+
+    const key1 = getCacheKey(KNOWN_LAT, KNOWN_LNG, 10);
+    const key2 = getCacheKey(KNOWN_LAT, KNOWN_LNG, 10);
+    
+    expect(key1).toBe(key2);
+    expect(key1).toBe('nearby_33.473500_-82.010500_10_v2');
+  });
+
+  test('getCacheKey generates different keys for different inputs', () => {
+    const getCacheKey = (lat: number, lng: number, radiusMiles: number): string => {
+      return `nearby_${lat.toFixed(6)}_${lng.toFixed(6)}_${radiusMiles}_v2`;
+    };
+
+    const key1 = getCacheKey(KNOWN_LAT, KNOWN_LNG, 10);
+    const key2 = getCacheKey(KNOWN_LAT, KNOWN_LNG, 20);
+    const key3 = getCacheKey(KNOWN_LAT + 0.1, KNOWN_LNG, 10);
+    
+    expect(key1).not.toBe(key2);
+    expect(key1).not.toBe(key3);
+  });
+});

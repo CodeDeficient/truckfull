@@ -1,0 +1,48 @@
+{
+  // Cloudflare deployment for the TruckFull SearXNG search proxy.
+  //
+  // Deliberately separate from wrangler.container-production.jsonc: search is a
+  // supporting capability, and keeping it in its own Worker means a failure here
+  // cannot take down the Next.js container (and vice versa).
+  //
+  // This Worker is the ONLY path into the SearXNG container. It authenticates
+  // every request before touching the container binding, so unauthorized traffic
+  // neither wakes the container nor consumes container CPU time.
+  //
+  // Private credentials (SEARXNG_SECRET, SEARXNG_PROXY_TOKEN) are Cloudflare
+  // secrets and never appear in this file.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "truckfull-searxng-production",
+  "main": "worker/searxng.mjs",
+  "compatibility_date": "2026-08-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+  },
+  "containers": [
+    {
+      "class_name": "SearxngContainer",
+      "image": "./containers/searxng/Dockerfile",
+      "image_build_context": "./containers/searxng",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "name": "truckfull-searxng-production",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "SearxngContainer",
+        "name": "SEARXNG_CONTAINER",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["SearxngContainer"],
+      "tag": "v1",
+    },
+  ],
+}

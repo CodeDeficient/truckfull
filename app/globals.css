@@ -1,0 +1,753 @@
+@import '../styles/enhanced-popup.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.particle-action-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  visibility: hidden;
+  contain: strict;
+}
+
+.particle-action-canvas.active {
+  visibility: visible;
+}
+
+.particle-action-dock {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  transform: translate(-50%, -50%);
+  opacity: 1;
+  pointer-events: auto;
+  will-change: left, top, opacity;
+}
+
+.particle-action-dock.traveling {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 767px) and (hover: none) {
+  .particle-action-dock {
+    display: none;
+  }
+}
+
+.particle-action-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+}
+
+.particle-action-button[hidden] {
+  display: none;
+}
+
+.particle-action-button svg {
+  width: 16px;
+  height: 16px;
+  overflow: visible;
+  stroke: currentColor;
+  stroke-width: 2.15;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 4px currentColor);
+  transition: filter 150ms ease, transform 150ms ease;
+}
+
+.particle-action-button.particle-action-edit svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.3;
+}
+
+.particle-action-button.particle-action-add {
+  color: #3dde82;
+}
+
+.particle-action-button.particle-action-edit {
+  color: #f5c94d;
+}
+
+.particle-action-button.particle-action-delete {
+  color: #f05757;
+}
+
+.particle-action-button:hover svg,
+.particle-action-button:focus-visible svg {
+  transform: scale(1.035);
+  filter: drop-shadow(0 0 5px currentColor) drop-shadow(0 0 9px currentColor);
+}
+
+.particle-action-button:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+.particle-day-cell.selected {
+  z-index: 2;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(71, 238, 190, 0.75),
+    0 0 10px rgba(71, 222, 164, 0.45);
+}
+
+.particle-day-cell.pending {
+  box-shadow: inset 0 0 0 1px rgba(92, 170, 255, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .particle-action-dock,
+  .particle-action-button svg {
+    transition: none;
+  }
+}
+
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading), Georgia, serif;
+  }
+}
+
+@property --angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes experimental-border-spin {
+  to {
+    --angle: 360deg;
+  }
+}
+
+.experimental-glow-border {
+  background: conic-gradient(
+    from var(--angle),
+    transparent,
+    #f59e0b 10%,
+    #fbbf24 15%,
+    #f59e0b 20%,
+    transparent 30%
+  );
+  animation: experimental-border-spin 3.2s linear infinite;
+  padding: 1px;
+  border-radius: 0.25rem;
+}
+
+.experimental-glow-border > span {
+  display: block;
+  background: rgba(20, 5, 5, 0.92);
+  border-radius: calc(0.25rem - 1px);
+  padding: 1px 6px 2px;
+}
+
+.experimental-glow-btn {
+  background: conic-gradient(
+    from var(--angle),
+    transparent,
+    #f59e0b 10%,
+    #fbbf24 15%,
+    #f59e0b 20%,
+    transparent 30%
+  );
+  animation: experimental-border-spin 3.2s linear infinite;
+  padding: 1px;
+}
+
+@supports not (background: paint(something)) {
+  .experimental-glow-border,
+  .experimental-glow-btn {
+    background: linear-gradient(135deg, #f59e0b33, #fbbf2433, #f59e0b33);
+    animation: none;
+  }
+}
+
+.experimental-glow-btn > .glow-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 4rem;
+  width: 100%;
+  border-radius: calc(0.5rem - 1px);
+  padding: 0.25rem 0.5rem;
+}
+
+.experimental-glow-btn > .glow-inner.flex-row {
+  flex-direction: row;
+  gap: 0.5rem;
+}
+
+.experimental-glow-btn > .glow-inner:not(.flex-row) {
+  gap: 0.125rem;
+}
+
+.experimental-glow-btn > .glow-inner[data-active="true"] {
+  background: #dc2626;
+}
+
+.experimental-glow-btn > .glow-inner[data-active="false"] {
+  background: rgb(28, 4, 4);
+}
+
+@layer base {
+  :root {
+    /* Dark mode (default) - Updated for better contrast */
+    --background: 0 0% 4%;
+    --foreground: 0 0% 90%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 90%;
+    --popover: 0 0% 16%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 64%;
+    --accent: 0 100% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 25%;
+    --input: 0 0% 25%;
+    --ring: 0 100% 50%;
+    --radius: 0.5rem;
+
+    --neon-red: #ef4444;
+    --neon-red-glow: #ef4444;
+    --ripple-red: #b91c1c;
+    --ripple-red-glow: rgba(185, 28, 28, 0.35);
+    --neon-blue: #00d4ff;
+    --glass-bg: rgba(255, 255, 255, 0.04);
+    --glass-bg-strong: rgba(255, 255, 255, 0.07);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-border-strong: rgba(255, 255, 255, 0.12);
+  }
+
+  .light {
+    /* Light mode - Updated for better contrast */
+    --background: 0 0% 100%; /* Pure white */
+    --foreground: 222.2 84% 4.9%; /* Very dark blue-gray */
+    --card: 0 0% 100%; /* Pure white */
+    --card-foreground: 222.2 84% 4.9%; /* Very dark blue-gray */
+    --popover: 0 0% 100%; /* Pure white */
+    --popover-foreground: 222.2 84% 4.9%; /* Very dark blue-gray */
+    --primary: 0 100% 45%; /* Slightly darker red for better contrast */
+    --primary-foreground: 0 0% 100%; /* Pure white */
+    --secondary: 210 40% 96%; /* Light blue-gray */
+    --secondary-foreground: 222.2 84% 4.9%; /* Very dark blue-gray */
+    --muted: 210 40% 96%; /* Light blue-gray */
+    --muted-foreground: 215.4 16.3% 35%; /* Darker gray (improved contrast) */
+    --accent: 0 100% 45%; /* Slightly darker red */
+    --accent-foreground: 0 0% 100%; /* Pure white */
+    --destructive: 0 84.2% 60.2%; /* Medium red */
+    --destructive-foreground: 0 0% 100%; /* Pure white */
+    --border: 214.3 31.8% 85%; /* Lighter border */
+    --input: 214.3 31.8% 85%; /* Lighter input */
+    --ring: 0 100% 45%; /* Slightly darker red */
+
+    /* Light mode glassmorphism variables */
+    --glass-bg: rgba(0, 0, 0, 0.02);
+    --glass-bg-strong: rgba(0, 0, 0, 0.05);
+    --glass-border: rgba(0, 0, 0, 0.08);
+    --glass-border-strong: rgba(0, 0, 0, 0.12);
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100vh;
+  }
+}
+
+/* Map marker glow effects and truck coloring */
+.glow-green {
+  --truck-color-light: #10b981;
+  --truck-color-dark: #059669;
+  filter: drop-shadow(0 0 8px #10b981);
+}
+
+.glow-red {
+  --truck-color-light: #f59e0b;
+  --truck-color-dark: #d97706;
+  filter: drop-shadow(0 0 8px #ef4444);
+}
+
+/* Enhanced glow in dark mode */
+.dark .glow-green {
+  filter: drop-shadow(0 0 12px #22c55e) drop-shadow(0 0 20px #22c55e80);
+}
+
+.dark .glow-red {
+  filter: drop-shadow(0 0 8px #ef4444) drop-shadow(0 0 12px #ef444480);
+}
+
+@layer components {
+  /* Glassmorphism utilities */
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-strong {
+    background: var(--glass-bg-strong);
+    backdrop-filter: blur(16px) saturate(200%);
+    border: 1px solid var(--glass-border-strong);
+  }
+
+  /* Neon effects - softer and more readable */
+  .neon-text {
+    color: var(--neon-red);
+    text-shadow:
+      0 0 1px rgba(0, 0, 0, 0.5),
+      0 0 2px rgba(0, 0, 0, 0.3),
+      0 0 3px var(--neon-red-glow),
+      0 0 4px var(--neon-red-glow);
+  }
+
+  .neon-border {
+    border: 1px solid var(--neon-red);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 0 2px var(--neon-red-glow),
+      inset 0 0 1px var(--neon-red-glow);
+  }
+
+  .neon-glow {
+    text-shadow:
+      0 0 1px rgba(0, 0, 0, 0.5),
+      0 0 2px rgba(0, 0, 0, 0.3),
+      0 0 3px var(--neon-red-glow),
+      0 0 4px var(--neon-red-glow);
+    font-family: var(--font-lobster);
+  }
+
+  @keyframes neon-flicker {
+    0% { opacity: 1; }
+    6% { opacity: 0.3; }
+    12% { opacity: 0.6; }
+    18% { opacity: 1; }
+    24% { opacity: 0.5; }
+    30% { opacity: 0.8; }
+    36% { opacity: 1; }
+    42% { opacity: 0.4; }
+    48% { opacity: 0.7; }
+    54% { opacity: 1; }
+    60% { opacity: 0.5; }
+    66% { opacity: 0.9; }
+    72% { opacity: 1; }
+    78% { opacity: 0.6; }
+    84% { opacity: 1; }
+    90% { opacity: 0.5; }
+    100% { opacity: 1; }
+  }
+
+  .neon-flicker {
+    animation: neon-flicker 2s ease-in-out forwards;
+  }
+
+  .neon-glow-reduced {
+    text-shadow:
+      0 0 2px rgba(0, 0, 0, 0.5),
+      0 0 8px rgba(239, 68, 68, 0.8),
+      0 0 16px rgba(239, 68, 68, 0.6);
+    font-family: var(--font-lobster);
+  }
+
+  /* Hover effects */
+  .hover-neon {
+    transition: all 0.3s ease;
+  }
+
+  .hover-neon:hover {
+    color: var(--neon-red);
+    text-shadow:
+      0 0 1px rgba(0, 0, 0, 0.5),
+      0 0 4px var(--neon-red-glow);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .no-hover-effects:hover {
+    backdrop-filter: none !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    transform: none !important;
+  }
+
+  /* Rounded modern styling */
+  .rounded-modern {
+    border-radius: 1rem;
+  }
+
+  .rounded-modern-lg {
+    border-radius: 1.5rem;
+  }
+
+  /* Modal and dialog z-index fixes */
+  [data-radix-dialog-overlay],
+  [data-radix-dialog-content] {
+    z-index: 10000 !important;
+  }
+
+  /* Leaflet map container should be lower */
+  .leaflet-container {
+    z-index: 1 !important;
+  }
+
+  /* Glassmorphism backdrop for modals */
+  [data-radix-dialog-overlay] {
+    background: rgba(8, 7, 16, 0.8);
+    backdrop-filter: blur(8px);
+  }
+
+  /* Allow glow effects for food truck markers */
+  .food-truck-marker-icon.glow-green,
+  .food-truck-marker-icon.glow-red {
+    filter: inherit !important;
+  }
+
+  /* Enhanced dark mode map styling for better contrast */
+  .dark .leaflet-container {
+    /* Add subtle border and enhanced contrast in dark mode */
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.05),
+      0 4px 6px rgba(0, 0, 0, 0.3),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  }
+
+  /* Enhance map attribution in dark mode */
+  .dark .leaflet-control-attribution {
+    background: rgba(0, 0, 0, 0.8) !important;
+    color: rgba(255, 255, 255, 0.8) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(8px);
+  }
+
+  .dark .leaflet-control-attribution a {
+    color: rgba(0, 212, 255, 0.9) !important;
+    text-shadow: 0 0 2px rgba(0, 212, 255, 0.3);
+  }
+
+  /* Enhance map controls in dark mode */
+  .dark .leaflet-control-zoom a {
+    background: rgba(0, 0, 0, 0.8) !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    backdrop-filter: blur(8px);
+    font-weight: bold;
+  }
+
+  .dark .leaflet-control-zoom a:hover {
+    background: rgba(0, 0, 0, 0.9) !important;
+    color: #00d4ff !important;
+    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+  }
+
+  /* Better popup styling in dark mode */
+  .dark .leaflet-popup-content-wrapper {
+    background: rgba(0, 0, 0, 0.9) !important;
+    color: rgba(255, 255, 255, 0.9) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  .dark .leaflet-popup-tip {
+    background: rgba(0, 0, 0, 0.9) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  }
+
+  /* Mapbox popup styling */
+  .custom-popup .mapboxgl-popup-content {
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px) saturate(180%);
+    -webkit-backdrop-filter: blur(10px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    color: var(--foreground);
+  }
+
+  .custom-popup .mapboxgl-popup-close-button {
+    color: var(--foreground);
+    background: transparent;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 5px;
+    transition: background-color 0.2s ease;
+  }
+
+  .custom-popup .mapboxgl-popup-close-button:hover {
+    background: transparent;
+  }
+
+  .dark .custom-popup .mapboxgl-popup-content {
+    background: rgba(30, 30, 30, 0.85);
+    backdrop-filter: blur(10px) saturate(180%);
+    -webkit-backdrop-filter: blur(10px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .dark .custom-popup .mapboxgl-popup-close-button {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .dark .custom-popup .mapboxgl-popup-close-button:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Enhanced food truck markers in dark mode with better glow */
+  .dark .food-truck-marker-icon.glow-green {
+    filter: drop-shadow(0 0 8px #22c55e) drop-shadow(0 0 16px #22c55e80)
+      drop-shadow(0 0 24px #22c55e40) brightness(1.2) contrast(1.1);
+  }
+
+  .dark .food-truck-marker-icon.glow-red {
+    filter: drop-shadow(0 0 8px #ef4444) drop-shadow(0 0 16px #ef444480)
+      drop-shadow(0 0 24px #ef444440) brightness(1.2) contrast(1.1);
+  }
+
+  /* Popular developer choice - CartoDB Dark Matter with minimal styling */
+  .popular-dark-theme {
+    /* Most developers prefer minimal filters - let the tiles speak for themselves */
+    filter: brightness(1) /* No brightness change - tiles are already optimized */ contrast(1.05); /* Tiny contrast boost for crispness */
+
+    /* Smooth loading */
+    transition: opacity 0.2s ease;
+  }
+
+  /* Alternative: Slight enhancement for those who want a bit more pop */
+  .popular-dark-enhanced {
+    filter: brightness(0.95) contrast(1.1) saturate(1.05);
+  }
+
+  /* Enhanced styling for dark mode map tiles */
+  .dark .leaflet-tile {
+    /* Ensure tiles blend well together */
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+  }
+
+  /* Fade in effect for map tiles */
+  .dark .leaflet-tile {
+    opacity: 0;
+    animation: fadeInTile 0.3s ease forwards;
+  }
+
+  @keyframes fadeInTile {
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+/* Critical CSS for instant skeleton rendering */
+.instant-skeleton {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000000;
+}
+.instant-skeleton.hidden { display: none; }
+
+.desktop-only {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .desktop-only {
+    display: block;
+  }
+}
+.skeleton-content {
+  text-align: center;
+  color: white;
+}
+.skeleton-logo {
+  width: 92px;
+  height: 64px;
+  margin: 0 auto 1rem;
+  object-fit: contain;
+}
+.skeleton-text {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #ef4444;
+  font-family: var(--font-lobster);
+}
+.skeleton-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: #ef4444;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 1rem auto 0;
+}
+@keyframes spin { to { transform: rotate(360deg);   }
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+.rainbow-hover {
+  position: relative;
+  isolation: isolate;
+}
+
+.rainbow-hover::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(90deg, #ef4444, #f59e0b, #eab308, #22c55e, #06b6d4, #6366f1, #d946ef, #ef4444);
+  background-size: 200% auto;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.rainbow-hover:hover::before,
+.rainbow-hover:focus-visible::before {
+  opacity: 1;
+  animation: gradientShift 2.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rainbow-hover:hover::before,
+  .rainbow-hover:focus-visible::before {
+    animation: none;
+  }
+}
+
+html:has([data-city-hub]) {
+  scrollbar-gutter: stable;
+}
+
+@keyframes hub-marquee-up {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(-100% / 4));
+  }
+}
+
+.hub-marquee-col {
+  animation: hub-marquee-up 120s linear infinite;
+}
+
+.hub-marquee-col-reverse {
+  animation-direction: reverse;
+}
+
+[data-marquee-paused] .hub-marquee-col {
+  animation-play-state: paused;
+}
+
+.hub-city-list a {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.05);
+  padding-block: 0.5rem;
+  color: rgb(243 244 246);
+  transition-property: color;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hub-city-list a:hover,
+.hub-city-list a:focus-visible {
+  color: rgb(248 113 113);
+}
+
+.hub-city-list a:focus {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.hub-city-list a > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hub-city-list a > span:last-child {
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  color: rgb(107 114 128);
+}
+
+.hub-sticker {
+  box-shadow:
+    0 3px 0 rgba(0, 0, 0, 0.55),
+    0 5px 2px rgba(0, 0, 0, 0.35),
+    0 16px 26px rgba(0, 0, 0, 0.7);
+}
+
+.hub-sticker::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 34% 8% at 32% 9%, rgba(255, 255, 255, 1), rgba(255, 255, 255, 0.5) 40%, rgba(255, 255, 255, 0) 75%),
+    radial-gradient(ellipse 8% 5% at 62% 8%, rgba(255, 255, 255, 1), rgba(255, 255, 255, 0) 80%),
+    radial-gradient(ellipse 14% 5% at 74% 91%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 80%),
+    radial-gradient(ellipse 75% 75% at 50% 42%, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.38) 100%),
+    linear-gradient(165deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.08) 30%, rgba(255, 255, 255, 0) 45%);
+  box-shadow:
+    inset 0 2px 1px rgba(255, 255, 255, 0.9),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    inset 0 8px 14px rgba(255, 255, 255, 0.14),
+    inset 0 -7px 12px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hub-marquee-col {
+    animation: none;
+  }
+}

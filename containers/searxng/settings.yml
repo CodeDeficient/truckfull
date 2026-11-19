@@ -1,0 +1,48 @@
+# TruckFull SearXNG settings for the Cloudflare Container deployment.
+#
+# Mirrors the previous self-hosted configuration so search behaviour does not
+# change. The secret_key placeholder is replaced at container start
+# by render-settings.sh; never commit a rendered copy.
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: 'TruckFull SearXNG'
+
+search:
+  safe_search: 0
+  autocomplete: ''
+  default_lang: 'en'
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  suspended_times:
+    SearxEngineAccessDenied: 86400
+    SearxEngineCaptcha: 86400
+    SearxEngineTooManyRequests: 3600
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: '0.0.0.0'
+  secret_key: '${SEARXNG_SECRET}'
+  limiter: false
+  public_instance: false
+  image_proxy: true
+  method_override: false
+
+outgoing:
+  request_timeout: 3.0
+  max_request_timeout: 10.0
+  useragent_suffix: 'TruckFull/1.0'
+  pool_connections: 100
+  pool_maxsize: 10
+  enable_http2: true
+  retries: 1
+
+use_default_settings:
+  engines:
+    remove:
+      - google
+      - startpage
+      - bing

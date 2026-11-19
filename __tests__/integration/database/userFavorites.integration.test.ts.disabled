@@ -1,0 +1,310 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { v4 as uuidv4 } from 'uuid';
+
+describe('User Favorites Database Integration', () => {
+  const supabase = getSupabaseAdmin();
+  let testUserId: string;
+  let testTruckId: string;
+  let testFavoriteId: string;
+
+  beforeAll(async () => {
+    // Create a test user
+    const { data: userData, error: userError } = await supabase
+      .from('profiles')
+      .insert({
+        id: uuidv4(),
+        email: 'fav-test@example.com',
+        full_name: 'Favorite Test User',
+      })
+      .select()
+      .single();
+
+    if (userError) {
+      throw new Error(`Failed to create test user: ${userError.message}`);
+    }
+
+    testUserId = userData.id;
+
+    // Create a test food truck
+    const { data: truckData, error: truckError } = await supabase
+      .from('food_trucks')
+      .insert({
+        name: 'Favorite Test Truck',
+        description: 'A test truck for favorite testing',
+        cuisine_type: ['Test'],
+        owner_id: 'fav-test-owner-id',
+      })
+      .select()
+      .single();
+
+    if (truckError) {
+      throw new Error(`Failed to create test truck: ${truckError.message}`);
+    }
+
+    testTruckId = truckData.id;
+  });
+
+  afterAll(async () => {
+    // Clean up test data
+    await supabase
+      .from('user_favorites')
+      .delete()
+      .eq('user_id', testUserId);
+
+    await supabase
+      .from('food_trucks')
+      .delete()
+      .eq('id', testTruckId);
+
+    await supabase
+      .from('profiles')
+      .delete()
+      .eq('id', testUserId);
+  });
+
+  describe('CRUD Operations', () => {
+    it('should create a new favorite', async () => {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: testUserId,
+          truck_id: testTruckId,
+        })
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.user_id).toBe(testUserId);
+      expect(data.truck_id).toBe(testTruckId);
+
+      testFavoriteId = data.id;
+    });
+
+    it('should read user favorites', async () => {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('*')
+        .eq('id', testFavoriteId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testFavoriteId);
+      expect(data.user_id).toBe(testUserId);
+      expect(data.truck_id).toBe(testTruckId);
+    });
+
+    it('should list all favorites for a user', async () => {
+      // Add another favorite
+      const { data: secondTruck, error: truckError } = await supabase
+        .from('food_trucks')
+        .insert({
+          name: 'Second Favorite Truck',
+          description: 'Another test truck',
+          cuisine_type: ['Test'],
+          owner_id: 'fav-test-owner-id-2',
+        })
+        .select()
+        .single();
+
+      if (truckError) {
+        throw new Error(`Failed to create second test truck: ${truckError.message}`);
+      }
+
+      await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: testUserId,
+          truck_id: secondTruck.id,
+        });
+
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('*, food_trucks(name)')
+        .eq('user_id', testUserId)
+        .order('created_at', { ascending: true });
+
+      expect(error).toBeNull();
+      expect(data).toHaveLength(2);
+      expect(data[0].food_trucks.name).toBe('Favorite Test Truck');
+      expect(data[1].food_trucks.name).toBe('Second Favorite Truck');
+
+      // Clean up second truck
+      await supabase
+        .from('user_favorites')
+        .delete()
+        .eq('truck_id', secondTruck.id);
+
+      await supabase
+        .from('food_trucks')
+        .delete()
+        .eq('id', secondTruck.id);
+    });
+
+    it('should delete a favorite', async () => {
+      const { error } = await supabase
+        .from('user_favorites')
+        .delete()
+        .eq('id', testFavoriteId);
+
+      expect(error).toBeNull();
+
+      // Verify deletion
+      const { data, error: readError } = await supabase
+        .from('user_favorites')
+        .select('*')
+        .eq('id', testFavoriteId)
+        .maybeSingle();
+
+      expect(readError).toBeNull();
+      expect(data).toBeNull();
+    });
+  });
+
+  describe('Data Integrity', () => {
+    beforeEach(async () => {
+      // Recreate favorite for each test
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: testUserId,
+          truck_id: testTruckId,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to create favorite: ${error.message}`);
+      }
+
+      testFavoriteId = data.id;
+    });
+
+    afterEach(async () => {
+      // Clean up favorite after each test
+      await supabase
+        .from('user_favorites')
+        .delete()
+        .eq('id', testFavoriteId);
+    });
+
+    it('should enforce unique user-truck combinations', async () => {
+      const { error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: testUserId,
+          truck_id: testTruckId,
+        });
+
+      expect(error).toBeDefined();
+      expect(error?.code).toBe('23505'); // Unique violation
+    });
+
+    it('should enforce foreign key constraints', async () => {
+      const { error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: 'non-existent-user-id',
+          truck_id: 'non-existent-truck-id',
+        });
+
+      expect(error).toBeDefined();
+      // Foreign key violations might manifest differently depending on the database
+      expect(error?.message).toMatch(/foreign key constraint/i);
+    });
+  });
+
+  describe('Relationships', () => {
+    it('should fetch favorites with truck details', async () => {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select(`
+          *,
+          food_trucks (
+            name,
+            description,
+            cuisine_type
+          )
+        `)
+        .eq('id', testFavoriteId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.food_trucks).toBeDefined();
+      expect(data.food_trucks.name).toBe('Favorite Test Truck');
+      expect(data.food_trucks.description).toBe('A test truck for favorite testing');
+      expect(data.food_trucks.cuisine_type).toEqual(['Test']);
+    });
+
+    it('should fetch user favorites with user details', async () => {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select(`
+          *,
+          profiles (
+            full_name,
+            email
+          )
+        `)
+        .eq('id', testFavoriteId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.profiles).toBeDefined();
+      expect(data.profiles.full_name).toBe('Favorite Test User');
+      expect(data.profiles.email).toBe('fav-test@example.com');
+    });
+  });
+
+  describe('Performance', () => {
+    beforeAll(async () => {
+      // Create multiple favorites for performance testing
+      const favorites = Array.from({ length: 100 }, (_, i) => ({
+        user_id: testUserId,
+        truck_id: testTruckId,
+      }));
+
+      await supabase
+        .from('user_favorites')
+        .insert(favorites);
+    });
+
+    afterAll(async () => {
+      // Clean up bulk favorites
+      await supabase
+        .from('user_favorites')
+        .delete()
+        .neq('id', testFavoriteId);
+    });
+
+    it('should efficiently query user favorites', async () => {
+      const startTime = Date.now();
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('*')
+        .eq('user_id', testUserId)
+        .limit(10);
+
+      const endTime = Date.now();
+      const queryTime = endTime - startTime;
+
+      expect(error).toBeNull();
+      expect(data).toHaveLength(10);
+      expect(queryTime).toBeLessThan(1000); // Should complete in under 1 second
+    });
+
+    it('should handle large result sets', async () => {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .select('COUNT(*)')
+        .eq('user_id', testUserId);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(parseInt(data[0].count)).toBeGreaterThan(100);
+    });
+  });
+});

@@ -1,0 +1,204 @@
+import {
+  getEventAccess,
+  getDocumentVisibility,
+  getApplicationPriority,
+  SubscriptionTier,
+  EventAccessResult,
+} from '@/lib/utils/eventAccess';
+
+describe('Event Access Utilities', () => {
+  describe('getEventAccess', () => {
+    describe('Free Tier', () => {
+      it('should allow viewing public free events but restrict application', () => {
+        const tier: SubscriptionTier = 'free';
+        const event = { vendor_fee: 0, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(false);
+        expect(result.canSeeDocuments).toBe(false);
+        expect(result.canSeeFullDetails).toBe(true);
+        expect(result.restrictionReason).toBe('Upgrade to apply to events');
+        expect(result.upgradeTarget).toBe('starter');
+      });
+
+      it('should restrict viewing private events', () => {
+        const tier: SubscriptionTier = 'free';
+        const event = { vendor_fee: 0, is_public: false };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(false);
+        expect(result.canApply).toBe(false);
+        expect(result.restrictionReason).toBe('This event is not available on the free tier');
+        expect(result.upgradeTarget).toBe('starter');
+      });
+
+      it('should restrict applying to paid events (even if public)', () => {
+        const tier: SubscriptionTier = 'free';
+        const event = { vendor_fee: 50, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(false);
+        expect(result.restrictionReason).toBe('Upgrade to apply to events');
+      });
+
+      it('should handle undefined tier as free', () => {
+        const tier: SubscriptionTier = undefined;
+        const event = { vendor_fee: 0, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(false);
+      });
+    });
+
+    describe('Starter Tier', () => {
+      it('should allow viewing and applying to free public events', () => {
+        const tier: SubscriptionTier = 'starter';
+        const event = { vendor_fee: 0, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(true);
+        expect(result.canSeeDocuments).toBe(false);
+        expect(result.canSeeFullDetails).toBe(true);
+        expect(result.restrictionReason).toBeUndefined();
+      });
+
+      it('should restrict applying to paid events', () => {
+        const tier: SubscriptionTier = 'starter';
+        const event = { vendor_fee: 100, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(false);
+        expect(result.restrictionReason).toBe('Upgrade to Pro to apply to paid events');
+        expect(result.upgradeTarget).toBe('pro');
+      });
+
+      it('should not see documents', () => {
+        const tier: SubscriptionTier = 'starter';
+        const event = { vendor_fee: 0, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canSeeDocuments).toBe(false);
+      });
+    });
+
+    describe('Pro Tier', () => {
+      it('should allow full access to paid events', () => {
+        const tier: SubscriptionTier = 'pro';
+        const event = { vendor_fee: 100, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(true);
+        expect(result.canSeeDocuments).toBe(true);
+        expect(result.canSeeFullDetails).toBe(true);
+        expect(result.restrictionReason).toBeUndefined();
+      });
+
+      it('should allow full access to free events', () => {
+        const tier: SubscriptionTier = 'pro';
+        const event = { vendor_fee: 0, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(true);
+        expect(result.canSeeDocuments).toBe(true);
+      });
+
+      it('should allow viewing private events', () => {
+        const tier: SubscriptionTier = 'pro';
+        const event = { vendor_fee: 0, is_public: false };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+        expect(result.canApply).toBe(true);
+      });
+    });
+
+    describe('Edge Cases', () => {
+      it('should handle null vendor_fee as 0 (free event)', () => {
+        const tier: SubscriptionTier = 'starter';
+        const event = { vendor_fee: null, is_public: true };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canApply).toBe(true);
+      });
+
+      it('should default is_public to true if undefined', () => {
+        const tier: SubscriptionTier = 'free';
+        const event = { vendor_fee: 0 };
+        const result = getEventAccess(tier, event);
+
+        expect(result.canView).toBe(true);
+      });
+    });
+  });
+
+  describe('getDocumentVisibility', () => {
+    it('should return full visibility for Pro tier', () => {
+      const visibility = getDocumentVisibility('pro');
+      expect(visibility).toEqual({
+        canSeeBadge: true,
+        canSeeBasicDocs: true,
+        canSeeAllDocs: true,
+        canSeeReviews: true,
+      });
+    });
+
+    it('should return limited visibility for Starter tier', () => {
+      const visibility = getDocumentVisibility('starter');
+      expect(visibility).toEqual({
+        canSeeBadge: true,
+        canSeeBasicDocs: true,
+        canSeeAllDocs: false,
+        canSeeReviews: false,
+      });
+    });
+
+    it('should return minimal visibility for Free tier', () => {
+      const visibility = getDocumentVisibility('free');
+      expect(visibility).toEqual({
+        canSeeBadge: true,
+        canSeeBasicDocs: false,
+        canSeeAllDocs: false,
+        canSeeReviews: false,
+      });
+    });
+
+    it('should return minimal visibility for undefined tier', () => {
+      const visibility = getDocumentVisibility(undefined);
+      expect(visibility).toEqual({
+        canSeeBadge: true,
+        canSeeBasicDocs: false,
+        canSeeAllDocs: false,
+        canSeeReviews: false,
+      });
+    });
+  });
+
+  describe('getApplicationPriority', () => {
+    it('should return highest priority for Pro tier', () => {
+      const priority = getApplicationPriority('pro');
+      expect(priority).toBe(1);
+    });
+
+    it('should return medium priority for Starter tier', () => {
+      const priority = getApplicationPriority('starter');
+      expect(priority).toBe(2);
+    });
+
+    it('should return lowest priority for Free tier', () => {
+      const priority = getApplicationPriority('free');
+      expect(priority).toBe(3);
+    });
+
+    it('should return lowest priority for undefined tier', () => {
+      const priority = getApplicationPriority(undefined);
+      expect(priority).toBe(3);
+    });
+  });
+});

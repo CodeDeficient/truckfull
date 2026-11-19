@@ -1,0 +1,164 @@
+import React from 'react';
+
+// Create a mock function that returns an SVG element for any icon
+const createIconMock = (iconName: string) => (props: any) => {
+  return React.createElement('svg', { 'data-testid': `icon-${iconName.toLowerCase()}`, ...props });
+};
+
+// Create a proxy to handle any icon name dynamically
+const iconProxy = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      return createIconMock(prop as string);
+    },
+  },
+) as any;
+
+// Comprehensive list of all icons used in the codebase
+export const Activity = createIconMock('Activity');
+export const AlertCircle = createIconMock('AlertCircle');
+export const AlertTriangle = createIconMock('AlertTriangle');
+export const Apple = createIconMock('Apple');
+export const ArrowLeft = createIconMock('ArrowLeft');
+export const ArrowRight = createIconMock('ArrowRight');
+export const ArrowUpDown = createIconMock('ArrowUpDown');
+export const Award = createIconMock('Award');
+export const BarChart3 = createIconMock('BarChart3');
+export const Beef = createIconMock('Beef');
+export const Bell = createIconMock('Bell');
+export const BellIcon = createIconMock('BellIcon');
+export const BellOffIcon = createIconMock('BellOffIcon');
+export const Bookmark = createIconMock('Bookmark');
+export const Bug = createIconMock('Bug');
+export const Building2 = createIconMock('Building2');
+export const Calendar = createIconMock('Calendar');
+export const CalendarDays = createIconMock('CalendarDays');
+export const CalendarIcon = createIconMock('CalendarIcon');
+export const Cake = createIconMock('Cake');
+export const Camera = createIconMock('Camera');
+export const Car = createIconMock('Car');
+export const ChefHat = createIconMock('ChefHat');
+export const Coffee = createIconMock('Coffee');
+export const CookingPot = createIconMock('CookingPot');
+export const Drumstick = createIconMock('Drumstick');
+export const Pizza = createIconMock('Pizza');
+export const Sandwich = createIconMock('Sandwich');
+export const Hamburger = createIconMock('Hamburger');
+export const Soup = createIconMock('Soup');
+export const Salad = createIconMock('Salad');
+export const Steak = createIconMock('Steak');
+export const Fish = createIconMock('Fish');
+export const Check = createIconMock('Check');
+export const CheckCircle = createIconMock('CheckCircle');
+export const CheckCircle2 = createIconMock('CheckCircle2');
+export const CheckCircleIcon = createIconMock('CheckCircleIcon');
+export const CheckSquare = createIconMock('CheckSquare');
+export const ChevronDown = createIconMock('ChevronDown');
+export const ChevronLeft = createIconMock('ChevronLeft');
+export const ChevronRight = createIconMock('ChevronRight');
+export const ChevronUp = createIconMock('ChevronUp');
+export const Chrome = createIconMock('Chrome');
+export const Circle = createIconMock('Circle');
+export const Clock = createIconMock('Clock');
+export const Clipboard = createIconMock('Clipboard');
+export const ClipboardCheck = createIconMock('ClipboardCheck');
+export const ClipboardList = createIconMock('ClipboardList');
+export const Copy = createIconMock('Copy');
+export const CreditCard = createIconMock('CreditCard');
+export const Crown = createIconMock('Crown');
+export const Database = createIconMock('Database');
+export const DollarSign = createIconMock('DollarSign');
+export const Dot = createIconMock('Dot');
+export const Download = createIconMock('Download');
+export const Edit = createIconMock('Edit');
+export const Edit2 = createIconMock('Edit2');
+export const ExternalLink = createIconMock('ExternalLink');
+export const Eye = createIconMock('Eye');
+export const EyeOff = createIconMock('EyeOff');
+export const Facebook = createIconMock('Facebook');
+export const FileCheck = createIconMock('FileCheck');
+export const FileText = createIconMock('FileText');
+export const FileSearch = createIconMock('FileSearch');
+export const Filter = createIconMock('Filter');
+export const Flame = createIconMock('Flame');
+export const Globe = createIconMock('Globe');
+export const GripVertical = createIconMock('GripVertical');
+export const Heart = createIconMock('Heart');
+export const HelpCircle = createIconMock('HelpCircle');
+export const Image = createIconMock('Image');
+export const ImagePlus = createIconMock('ImagePlus');
+export const Info = createIconMock('Info');
+export const Instagram = createIconMock('Instagram');
+export const Key = createIconMock('Key');
+export const Layers = createIconMock('Layers');
+export const Loader2 = createIconMock('Loader2');
+export const Lock = createIconMock('Lock');
+export const LogOut = createIconMock('LogOut');
+export const Mail = createIconMock('Mail');
+export const Map = createIconMock('Map');
+export const MapPin = createIconMock('MapPin');
+export const Menu = createIconMock('Menu');
+export const Merge = createIconMock('Merge');
+export const MessageSquare = createIconMock('MessageSquare');
+export const MessageSquareQuote = createIconMock('MessageSquareQuote');
+export const Minus = createIconMock('Minus');
+export const MinusCircle = createIconMock('MinusCircle');
+export const Moon = createIconMock('Moon');
+export const MoreHorizontal = createIconMock('MoreHorizontal');
+export const MousePointer = createIconMock('MousePointer');
+export const Navigation = createIconMock('Navigation');
+export const Package = createIconMock('Package');
+export const Package2 = createIconMock('Package2');
+export const Palette = createIconMock('Palette');
+export const PanelLeft = createIconMock('PanelLeft');
+export const Pencil = createIconMock('Pencil');
+export const Phone = createIconMock('Phone');
+export const Play = createIconMock('Play');
+export const Plus = createIconMock('Plus');
+export const Radio = createIconMock('Radio');
+export const Recycle = createIconMock('Recycle');
+export const RefreshCw = createIconMock('RefreshCw');
+export const RotateCcw = createIconMock('RotateCcw');
+export const Search = createIconMock('Search');
+export const Send = createIconMock('Send');
+export const Server = createIconMock('Server');
+export const Settings = createIconMock('Settings');
+export const Settings2 = createIconMock('Settings2');
+export const SettingsIcon = createIconMock('SettingsIcon');
+export const Share2 = createIconMock('Share2');
+export const Shield = createIconMock('Shield');
+export const ShieldCheck = createIconMock('ShieldCheck');
+export const ShoppingCart = createIconMock('ShoppingCart');
+export const SlidersHorizontal = createIconMock('SlidersHorizontal');
+export const Sparkles = createIconMock('Sparkles');
+export const Square = createIconMock('Square');
+export const Star = createIconMock('Star');
+export const Store = createIconMock('Store');
+export const Sun = createIconMock('Sun');
+export const Trash2 = createIconMock('Trash2');
+export const ThumbsUp = createIconMock('ThumbsUp');
+export const ThumbsDown = createIconMock('ThumbsDown');
+export const TrendingDown = createIconMock('TrendingDown');
+export const TrendingUp = createIconMock('TrendingUp');
+export const Truck = createIconMock('Truck');
+export const Tag = createIconMock('Tag');
+export const Twitter = createIconMock('Twitter');
+export const Upload = createIconMock('Upload');
+export const UploadCloud = createIconMock('UploadCloud');
+export const User = createIconMock('User');
+export const UserPlus = createIconMock('UserPlus');
+export const Users = createIconMock('Users');
+export const UserIcon = createIconMock('UserIcon');
+export const Utensils = createIconMock('Utensils');
+export const Video = createIconMock('Video');
+export const Wifi = createIconMock('Wifi');
+export const WifiOff = createIconMock('WifiOff');
+export const X = createIconMock('X');
+export const XCircle = createIconMock('XCircle');
+export const Zap = createIconMock('Zap');
+export const PlusCircle = createIconMock('PlusCircle');
+export const PlusSquare = createIconMock('PlusSquare');
+
+// Export proxy as a fallback for any icon that wasn't explicitly listed
+export default iconProxy;

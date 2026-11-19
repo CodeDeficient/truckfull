@@ -1,0 +1,191 @@
+import { describe, it, expect } from '@jest/globals';
+import { applyAllFilters, applyCuisineFilter, applyPriceRangeFilter } from '@/lib/api/search/filters';
+import type { FoodTruckDomain } from '@/lib/types';
+import { DEFAULT_FILTERS, CUISINE_TYPES } from '@/lib/filters/types';
+
+describe('Filter Logic Tests', () => {
+  // Sample truck data for testing
+  const sampleTrucks: FoodTruckDomain[] = [
+    {
+      id: '1',
+      name: 'Taco Truck',
+      description: 'Delicious Mexican food',
+      cuisine_type: ['Mexican', 'Tacos'],
+      price_rating: 2,
+      specialties: 'Tacos, Burritos',
+      operating_hours: {
+        mon: { open: '09:00', close: '18:00' },
+        tue: { open: '09:00', close: '18:00' },
+        wed: { open: '09:00', close: '18:00' },
+        thu: { open: '09:00', close: '18:00' },
+        fri: { open: '09:00', close: '20:00' },
+        sat: { open: '10:00', close: '16:00' },
+        sun: { closed: true }
+      },
+      current_location: { lat: 40.7128, lng: -74.0060 },
+      is_active: true,
+      owner_id: 'owner1',
+      verification_status: 'verified',
+      data_quality_score: 0.9
+    },
+    {
+      id: '2',
+      name: 'Pizza Place',
+      description: 'Authentic Italian pizza',
+      cuisine_type: ['Italian', 'Pizza'],
+      price_rating: 3,
+      specialties: 'Pizza, Pasta',
+      operating_hours: {
+        mon: { open: '11:00', close: '22:00' },
+        tue: { open: '11:00', close: '22:00' },
+        wed: { open: '11:00', close: '22:00' },
+        thu: { open: '11:00', close: '22:00' },
+        fri: { open: '11:00', close: '23:00' },
+        sat: { open: '12:00', close: '23:00' },
+        sun: { open: '12:00', close: '20:00' }
+      },
+      current_location: { lat: 40.7589, lng: -73.9851 },
+      is_active: true,
+      owner_id: 'owner2',
+      verification_status: 'verified',
+      data_quality_score: 0.95
+    },
+    {
+      id: '3',
+      name: 'Burger Joint',
+      description: 'Gourmet burgers and fries',
+      cuisine_type: ['American', 'Burgers'],
+      price_rating: 1,
+      specialties: 'Burgers, Fries, Shakes',
+      operating_hours: {
+        mon: { closed: true },
+        tue: { open: '11:00', close: '21:00' },
+        wed: { open: '11:00', close: '21:00' },
+        thu: { open: '11:00', close: '21:00' },
+        fri: { open: '11:00', close: '22:00' },
+        sat: { open: '10:00', close: '22:00' },
+        sun: { open: '10:00', close: '20:00' }
+      },
+      current_location: { lat: 40.7505, lng: -73.9934 },
+      is_active: true,
+      owner_id: 'owner3',
+      verification_status: 'pending',
+      data_quality_score: 0.7
+    }
+  ];
+
+  describe('applyCuisineFilter', () => {
+    it('should filter by cuisine with exact and case-insensitive match', () => {
+      const result = applyCuisineFilter(sampleTrucks, ['mexican']);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Taco Truck');
+    });
+
+    it('should return all trucks when no cuisines are selected', () => {
+      const result = applyCuisineFilter(sampleTrucks, []);
+      expect(result).toHaveLength(sampleTrucks.length);
+    });
+
+    it('should filter by multiple cuisines', () => {
+      const result = applyCuisineFilter(sampleTrucks, ['italian', 'american']);
+      expect(result).toHaveLength(2);
+      expect(result.map(t => t.name)).toContain('Pizza Place');
+      expect(result.map(t => t.name)).toContain('Burger Joint');
+    });
+  });
+
+  describe('applyPriceRangeFilter', () => {
+    it('should filter by price range [2,3] including boundary values', () => {
+      const result = applyPriceRangeFilter(sampleTrucks, { min: 2, max: 3 });
+      expect(result).toHaveLength(2);
+      expect(result.map(t => t.name)).toContain('Taco Truck');
+      expect(result.map(t => t.name)).toContain('Pizza Place');
+    });
+
+    it('should include trucks with price rating 3 in [2,4] range', () => {
+      const result = applyPriceRangeFilter(sampleTrucks, { min: 2, max: 4 });
+      expect(result).toHaveLength(2);
+      expect(result.map(t => t.name)).toContain('Taco Truck');
+      expect(result.map(t => t.name)).toContain('Pizza Place');
+    });
+
+    it('should exclude trucks outside the price range', () => {
+      const result = applyPriceRangeFilter(sampleTrucks, { min: 1, max: 1 });
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Burger Joint');
+    });
+  });
+
+  describe('applyAllFilters', () => {
+    it('should apply no filters when default filters are used', () => {
+      const result = applyAllFilters(sampleTrucks, DEFAULT_FILTERS);
+      expect(result).toHaveLength(sampleTrucks.length);
+    });
+
+    it('should apply cuisine filter only', () => {
+      const filters = { ...DEFAULT_FILTERS, cuisines: ['mexican'] };
+      const result = applyAllFilters(sampleTrucks, filters);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Taco Truck');
+    });
+
+    it('should apply price range filter only', () => {
+      const filters = { ...DEFAULT_FILTERS, priceRange: { min: 1, max: 2 } };
+      const result = applyAllFilters(sampleTrucks, filters);
+      expect(result).toHaveLength(2);
+      expect(result.map(t => t.name)).toContain('Taco Truck');
+      expect(result.map(t => t.name)).toContain('Burger Joint');
+    });
+
+    it('should apply multiple filters together', () => {
+      const filters = { 
+        ...DEFAULT_FILTERS, 
+        cuisines: ['mexican', 'american'], 
+        priceRange: { min: 1, max: 2 } 
+      };
+      const result = applyAllFilters(sampleTrucks, filters);
+      expect(result).toHaveLength(2);
+      expect(result.map(t => t.name)).toContain('Taco Truck');
+      expect(result.map(t => t.name)).toContain('Burger Joint');
+    });
+
+    it('should apply search query filter', () => {
+      const filters = { ...DEFAULT_FILTERS, searchQuery: 'pizza' };
+      const result = applyAllFilters(sampleTrucks, filters);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Pizza Place');
+    });
+
+    it('should combine search and cuisine filters', () => {
+      const filters = { 
+        ...DEFAULT_FILTERS, 
+        searchQuery: 'truck', 
+        cuisines: ['mexican'] 
+      };
+      const result = applyAllFilters(sampleTrucks, filters);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Taco Truck');
+    });
+  });
+
+  describe('Price Range Tests', () => {
+    it('should return truck with price_rating=3 in [2,4] range', () => {
+      const truckWithPrice3 = {
+        ...sampleTrucks[1], // This has price_rating: 3
+        price_rating: 3
+      };
+      const result = applyPriceRangeFilter([truckWithPrice3], { min: 2, max: 4 });
+      expect(result).toHaveLength(1);
+      expect(result[0].price_rating).toBe(3);
+    });
+
+    it('should not return truck with price_rating=3 in [0,2] range', () => {
+      const truckWithPrice3 = {
+        ...sampleTrucks[1], // This has price_rating: 3
+        price_rating: 3
+      };
+      const result = applyPriceRangeFilter([truckWithPrice3], { min: 0, max: 2 });
+      expect(result).toHaveLength(0);
+    });
+  });
+});

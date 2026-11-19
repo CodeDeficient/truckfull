@@ -1,0 +1,59 @@
+# Secrets — must never enter the build context
+.env
+.env.*
+.dev.vars
+.act.secrets
+.vars
+*.pem
+*.key
+gha-creds-*.json
+
+# Version control and CI
+.git
+.github
+.husky
+
+# Dependencies and build output (rebuilt inside the image)
+node_modules
+.next
+.open-next
+.wrangler
+.wrangler-probe-out
+out
+build
+dist
+
+# Test, coverage and report artifacts
+coverage
+.nyc_output
+playwright-report
+test-results
+playwright/.auth
+.reports
+reports
+jscpd-report
+*.log
+
+# Local tooling and scratch space
+tmp
+.opencode
+.agents
+.vercel
+.vscode
+.idea
+tools
+supabase/.temp
+backups
+
+# Probe and audit output
+.probe
+*.png
+*.bin
+*.xlsx
+DOT-data
+
+*.csv
+*.zip
+quarantine
+.claude
+*Zone.Identifier

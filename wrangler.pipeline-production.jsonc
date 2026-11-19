@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "truckfull-pipeline-production",
+  "main": "worker/pipeline.mjs",
+  "compatibility_date": "2026-08-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "PIPELINE_ENABLED": "true",
+    "NEXT_PUBLIC_APP_URL": "https://www.truckfull.food",
+  },
+  "containers": [
+    {
+      "class_name": "PipelineContainer",
+      "image": "./containers/pipeline/Dockerfile",
+      "image_build_context": ".",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "name": "truckfull-pipeline-production",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "PipelineContainer",
+        "name": "PIPELINE_CONTAINER",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["PipelineContainer"],
+      "tag": "v1",
+    },
+  ],
+  "triggers": {
+    "crons": ["0 6 * * *"],
+  },
+}

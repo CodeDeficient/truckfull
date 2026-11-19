@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+#
+# TruckFull container image for Cloudflare Containers.
+#
+# Secret handling:
+# - The build receives ONLY public values (NEXT_PUBLIC_*, INDEXNOW_KEY) through
+#   .container-build.env, generated from the local env file by the
+#   scripts/container/collect-public-build-env.mjs. The collector fails the
+#   build if the required public values are missing, and its output cannot
+#   contain private secrets by construction.
+# - Private runtime secrets (service-role key, webhook secrets, provider API
+#   keys) are never passed to the build at all; they are injected as container
+#   environment variables at run time.
+# - .dockerignore keeps .env*, .dev.vars, and other secret files out of the
+#   build context.
+#
+# Wrangler builds this image itself (wrangler deploy), so no BuildKit secret
+# mounts are used.
+
+FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:5991875dfb80938dd8a6ba3fe3e96fd04929e70792762b3319d8caadbbe229bc AS dependencies
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+
+RUN npm ci
+
+FROM dependencies AS builder
+
+WORKDIR /app
+
+COPY .container-build.env /app/.env.local
+COPY . .
+
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_OUTPUT_STANDALONE=true
+
+RUN npm run build
+
+FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:5991875dfb80938dd8a6ba3fe3e96fd04929e70792762b3319d8caadbbe229bc AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN useradd --system --uid 1001 nextjs
+
+COPY --from=builder --chown=nextjs:nextjs /app/public ./public
+COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nextjs /app/.next/server/app/serwist ./.next/server/app/serwist
+COPY --from=builder --chown=nextjs:nextjs /app/.env.local ./.env.local
+
+USER nextjs
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]

@@ -1,0 +1,510 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { v4 as uuidv4 } from 'uuid';
+
+describe('Application Flow Integration', () => {
+  const supabase = getSupabaseAdmin();
+  let testUserId: string;
+  let testTruckOwnerId: string;
+  let testTruckId: string;
+  let testFavoriteId: string;
+  let testReviewId: string;
+  let testOrderId: string;
+  let testEventId: string;
+
+  beforeAll(async () => {
+    // Create a test user (customer)
+    const { data: userData, error: userError } = await supabase
+      .from('profiles')
+      .insert({
+        id: uuidv4(),
+        email: 'customer@test.com',
+        full_name: 'Test Customer',
+      })
+      .select()
+      .single();
+
+    if (userError) {
+      throw new Error(`Failed to create test user: ${userError.message}`);
+    }
+
+    testUserId = userData.id;
+
+    // Create a test food truck owner
+    const { data: ownerData, error: ownerError } = await supabase
+      .from('profiles')
+      .insert({
+        id: uuidv4(),
+        email: 'owner@test.com',
+        full_name: 'Test Food Truck Owner',
+      })
+      .select()
+      .single();
+
+    if (ownerError) {
+      throw new Error(`Failed to create test truck owner: ${ownerError.message}`);
+    }
+
+    testTruckOwnerId = ownerData.id;
+
+    // Create a test food truck
+    const { data: truckData, error: truckError } = await supabase
+      .from('food_trucks')
+      .insert({
+        name: 'Integration Test Food Truck',
+        description: 'A test food truck for integration testing',
+        cuisine_type: ['Test'],
+        owner_id: testTruckOwnerId,
+        average_rating: 0,
+        review_count: 0,
+      })
+      .select()
+      .single();
+
+    if (truckError) {
+      throw new Error(`Failed to create test truck: ${truckError.message}`);
+    }
+
+    testTruckId = truckData.id;
+  });
+
+  afterAll(async () => {
+    // Clean up all test data in reverse order
+    await supabase
+      .from('events')
+      .delete()
+      .eq('truck_id', testTruckId);
+
+    await supabase
+      .from('orders')
+      .delete()
+      .or(`user_id.eq.${testUserId},truck_id.eq.${testTruckId}`);
+
+    await supabase
+      .from('reviews')
+      .delete()
+      .or(`user_id.eq.${testUserId},truck_id.eq.${testTruckId}`);
+
+    await supabase
+      .from('user_favorites')
+      .delete()
+      .or(`user_id.eq.${testUserId},truck_id.eq.${testTruckId}`);
+
+    await supabase
+      .from('food_trucks')
+      .delete()
+      .eq('id', testTruckId);
+
+    await supabase
+      .from('profiles')
+      .delete()
+      .or(`id.eq.${testUserId},id.eq.${testTruckOwnerId}`);
+  });
+
+  describe('Customer Journey', () => {
+    it('should allow customer to discover food trucks', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.length).toBeGreaterThan(0);
+    });
+
+    it('should allow customer to favorite a food truck', async () => {
+      const { data, error } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: testUserId,
+          truck_id: testTruckId,
+        })
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.user_id).toBe(testUserId);
+      expect(data.truck_id).toBe(testTruckId);
+
+      testFavoriteId = data.id;
+    });
+
+    it('should allow customer to leave a review for a food truck', async () => {
+      const reviewData = {
+        user_id: testUserId,
+        truck_id: testTruckId,
+        rating: 5,
+        review_text: 'Excellent food truck! Great service and delicious food.',
+      };
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .insert(reviewData)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.user_id).toBe(testUserId);
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.rating).toBe(reviewData.rating);
+      expect(data.review_text).toBe(reviewData.review_text);
+
+      testReviewId = data.id;
+    });
+
+    it('should update truck rating after review submission', async () => {
+      // Wait a bit for any triggers to update the truck rating
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('average_rating, review_count')
+        .eq('id', testTruckId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.average_rating).toBe(5);
+      expect(data.review_count).toBe(1);
+    });
+
+    it('should allow customer to place an order', async () => {
+      const orderData = {
+        user_id: testUserId,
+        truck_id: testTruckId,
+        status: 'pending',
+        total_amount: 25.99,
+        items: [
+          {
+            name: 'Test Item',
+            price: 12.99,
+            quantity: 2,
+          },
+        ],
+      };
+
+      const { data, error } = await supabase
+        .from('orders')
+        .insert(orderData)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.user_id).toBe(testUserId);
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.status).toBe(orderData.status);
+      expect(data.total_amount).toBe(orderData.total_amount);
+
+      testOrderId = data.id;
+    });
+
+    it('should allow customer to view upcoming events', async () => {
+      // Create an event
+      const eventStartTime = new Date(Date.now() + 86400000).toISOString(); // Tomorrow
+      const eventEndTime = new Date(Date.now() + 172800000).toISOString(); // Day after tomorrow
+
+      const { data: eventData, error: eventError } = await supabase
+        .from('events')
+        .insert({
+          truck_id: testTruckId,
+          title: 'Integration Test Event',
+          description: 'An event for integration testing',
+          start_time: eventStartTime,
+          end_time: eventEndTime,
+          location: {
+            type: 'Point',
+            coordinates: [-98.5795, 39.8283],
+          },
+          address: '123 Test Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+          is_recurring: false,
+        })
+        .select()
+        .single();
+
+      if (eventError) {
+        throw new Error(`Failed to create test event: ${eventError.message}`);
+      }
+
+      testEventId = eventData.id;
+
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('id', testEventId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.title).toBe('Integration Test Event');
+    });
+  });
+
+  describe('Food Truck Owner Journey', () => {
+    it('should allow owner to manage their food truck', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .eq('id', testTruckId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+      expect(data.owner_id).toBe(testTruckOwnerId);
+    });
+
+    it('should allow owner to view their orders', async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.length).toBe(1);
+      expect(data[0].id).toBe(testOrderId);
+    });
+
+    it('should allow owner to view reviews for their truck', async () => {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.length).toBe(1);
+      expect(data[0].id).toBe(testReviewId);
+    });
+
+    it('should allow owner to manage events for their truck', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.length).toBe(1);
+      expect(data[0].id).toBe(testEventId);
+    });
+  });
+
+  describe('Admin Journey', () => {
+    it('should allow admin to view all food trucks', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('COUNT(*)')
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(parseInt(data.count)).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should allow admin to view all orders', async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('COUNT(*)')
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(parseInt(data.count)).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should allow admin to view all reviews', async () => {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('COUNT(*)')
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(parseInt(data.count)).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should allow admin to view all events', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('COUNT(*)')
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(parseInt(data.count)).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('Data Consistency', () => {
+    it('should maintain referential integrity across related tables', async () => {
+      // Verify that all related records exist and are correctly linked
+      const checks = [
+        // Check favorite
+        supabase.from('user_favorites').select('*').eq('id', testFavoriteId).single(),
+        // Check review
+        supabase.from('reviews').select('*').eq('id', testReviewId).single(),
+        // Check order
+        supabase.from('orders').select('*').eq('id', testOrderId).single(),
+        // Check event
+        supabase.from('events').select('*').eq('id', testEventId).single(),
+      ];
+
+      const results = await Promise.all(checks);
+
+      for (const { error, data } of results) {
+        expect(error).toBeNull();
+        expect(data).toBeDefined();
+      }
+    });
+
+    it('should handle cascading deletes properly', async () => {
+      // This test verifies that when a user is deleted, their related records
+      // are handled according to the database schema (either deleted or orphaned)
+      
+      // First, create a separate user for this test to avoid disrupting other tests
+      const { data: userData, error: userError } = await supabase
+        .from('profiles')
+        .insert({
+          id: uuidv4(),
+          email: 'cascade-test@test.com',
+          full_name: 'Cascade Test User',
+        })
+        .select()
+        .single();
+
+      if (userError) {
+        throw new Error(`Failed to create cascade test user: ${userError.message}`);
+      }
+
+      const cascadeTestUserId = userData.id;
+
+      // Create related records
+      const { data: favoriteData, error: favoriteError } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: cascadeTestUserId,
+          truck_id: testTruckId,
+        })
+        .select()
+        .single();
+
+      if (favoriteError) {
+        throw new Error(`Failed to create cascade test favorite: ${favoriteError.message}`);
+      }
+
+      // Delete the user
+      const { error: deleteError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', cascadeTestUserId);
+
+      expect(deleteError).toBeNull();
+
+      // Check what happened to the favorite
+      const { data: remainingFavorite, error: remainingError } = await supabase
+        .from('user_favorites')
+        .select('*')
+        .eq('id', favoriteData.id)
+        .maybeSingle();
+
+      expect(remainingError).toBeNull();
+      
+      // Depending on the database schema, the favorite may or may not have been deleted
+      // For now, we'll just verify that the query succeeded
+      expect(remainingFavorite).toBeDefined();
+    });
+  });
+
+  describe('Performance', () => {
+    it('should efficiently query related data for a truck', async () => {
+      const startTime = Date.now();
+      
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select(`
+          *,
+          reviews (
+            rating,
+            review_text,
+            profiles (
+              full_name
+            )
+          ),
+          events (
+            title,
+            start_time,
+            end_time
+          ),
+          orders (
+            status,
+            total_amount
+          )
+        `)
+        .eq('id', testTruckId)
+        .single();
+
+      const endTime = Date.now();
+      const queryTime = endTime - startTime;
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+      
+      // Verify related data is included
+      expect(data.reviews).toBeDefined();
+      expect(data.events).toBeDefined();
+      expect(data.orders).toBeDefined();
+      
+      // Should complete in under 1 second
+      expect(queryTime).toBeLessThan(1000);
+    });
+
+    it('should efficiently query customer dashboard data', async () => {
+      const startTime = Date.now();
+      
+      const { data, error } = await supabase.rpc('get_customer_dashboard_data', {
+        user_id_param: testUserId,
+      });
+
+      const endTime = Date.now();
+      const queryTime = endTime - startTime;
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      
+      // Should complete in under 1 second
+      expect(queryTime).toBeLessThan(1000);
+    });
+
+    it('should efficiently query owner dashboard data', async () => {
+      const startTime = Date.now();
+      
+      const { data, error } = await supabase.rpc('get_owner_dashboard_data', {
+        owner_id_param: testTruckOwnerId,
+      });
+
+      const endTime = Date.now();
+      const queryTime = endTime - startTime;
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      
+      // Should complete in under 1 second
+      expect(queryTime).toBeLessThan(1000);
+    });
+  });
+});
+

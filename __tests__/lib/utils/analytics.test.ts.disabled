@@ -1,0 +1,89 @@
+import { trackEvent, trackTruckView, trackMenuClick, trackDirectionsClick, trackFavorite, trackShare, trackCall, trackWebsiteClick } from '@/lib/utils/analytics';
+
+// Mock global fetch
+const mockFetch = jest.fn();
+global.fetch = mockFetch as any;
+
+describe('Analytics Utility', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetch.mockResolvedValue({ ok: true });
+    // Reset internal state if possible, but module scope variables persist.
+    // We can rely on different truckIds or eventTypes to avoid debounce collisions.
+  });
+
+  it('should track an event successfully', async () => {
+    const truckId = 'truck-1';
+    const eventType = 'view';
+    const metadata = { source: 'search' };
+
+    await trackEvent(eventType, truckId, metadata);
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/analytics/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ truckId, eventType, metadata }),
+    });
+  });
+
+  it('should debounce duplicate events within 5 seconds', async () => {
+    const truckId = 'truck-debounce';
+    const eventType = 'click_menu';
+
+    // First call
+    await trackEvent(eventType, truckId);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Second call immediately after (should be ignored)
+    await trackEvent(eventType, truckId);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Third call with different ID (should be sent)
+    await trackEvent(eventType, 'truck-other');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should handle fetch errors gracefully (silent fail)', async () => {
+    mockFetch.mockRejectedValue(new Error('Network error'));
+    
+    // Should not throw
+    await expect(trackEvent('share', 'truck-error')).resolves.not.toThrow();
+    
+    // Should verify call was attempted
+    expect(mockFetch).toHaveBeenCalled();
+  });
+
+  it('should handle non-ok responses gracefully', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+    
+    // Should not throw
+    await expect(trackEvent('call', 'truck-500')).resolves.not.toThrow();
+  });
+
+  // Helper function tests
+  const helpers = [
+    { fn: trackTruckView, type: 'view' },
+    { fn: trackMenuClick, type: 'click_menu' },
+    { fn: trackDirectionsClick, type: 'click_directions' },
+    { fn: trackFavorite, type: 'favorite' },
+    { fn: trackShare, type: 'share' },
+    { fn: trackCall, type: 'call' },
+    { fn: trackWebsiteClick, type: 'website' },
+  ];
+
+  helpers.forEach(({ fn, type }) => {
+    it(`should track ${type} event via helper`, async () => {
+      const truckId = `truck-${type}`;
+      fn(truckId);
+      
+      // Helpers are void, so we can't await them directly easily without modifying implementation to return the promise.
+      // However, trackEvent is async. calling the helper initiates the async op.
+      // We need to wait a tick for the promise to resolve/mockFetch to be called.
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/analytics/track', expect.objectContaining({
+        body: JSON.stringify({ truckId, eventType: type })
+      }));
+    });
+  });
+});

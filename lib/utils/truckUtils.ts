@@ -1,0 +1,80 @@
+import type { FoodTruckDomain, FoodTruck, MenuCategory } from '@/lib/types';
+import { generateSlug } from './slug';
+
+export const convertToFoodTruck = (domain: FoodTruckDomain, _isClient: boolean): FoodTruck => {
+  if (!domain) {
+    throw new Error('Domain object is required for conversion');
+  }
+
+  return {
+    id: domain.id || 'unknown',
+    name: domain.name || 'Unknown Truck',
+    description: domain.description || '',
+    created_at: domain.created_at ?? null,
+    updated_at: domain.updated_at ?? null,
+    current_location: domain.current_location ?? null,
+    operating_hours: domain.operating_hours ?? null,
+    timezone: domain.timezone ?? null,
+    current_day_hours: domain.current_day_hours ?? null,
+    current_day_service_date: domain.current_day_service_date ?? null,
+    current_day_location: domain.current_day_location ?? null,
+    upcoming_overrides: domain.upcoming_overrides ?? null,
+    menu_items: domain.menu_items ?? null,
+    cuisine_type: Array.isArray(domain.cuisine_type) ? domain.cuisine_type : [],
+    data_quality_score: domain.data_quality_score ?? null,
+    verification_status: domain.verification_status ?? null,
+    source_url: typeof domain.source_url === 'string' ? domain.source_url : '',
+    last_synced_at: domain.last_synced_at ?? null,
+    average_rating: domain.average_rating ?? null,
+    review_count: domain.review_count ?? null,
+    contact_info: domain.contact_info ?? {},
+    social_media: domain.social_media ?? {},
+    is_active: domain.is_active ?? false,
+    price_range: domain.price_range || '',
+    specialties: domain.specialties || [],
+    // Add any missing fields with default values
+    location_geog: null,
+    owner_id: domain.owner_id ?? null,
+    subscription_tier: (domain as unknown as Record<string, unknown>).subscription_tier as string | undefined, // Preserve tier for status rings
+    verification_documents: null,
+    verification_notes: null,
+    verification_requested_at: null,
+    verified_at: null,
+    verified_by: null,
+    // Additional optional fields that might be expected in FoodTruck
+    menu: (domain.menu_items ?? null) as unknown as MenuCategory[] | undefined,
+    scheduled_locations: [],
+    source_urls: [],
+    exact_location: null,
+    city_location: null,
+    phone_number: domain.contact_info?.phone,
+    email: domain.contact_info?.email,
+    website: domain.contact_info?.website,
+    instagram_handle: domain.social_media?.instagram,
+    facebook_handle: domain.social_media?.facebook,
+    twitter_handle: domain.social_media?.twitter,
+    schedule: undefined,
+    // New fields required by updated database types
+    city: domain.city ?? null,
+    street_address: domain.street_address ?? null,
+    zip: domain.zip ?? null,
+    state: domain.state ?? null,
+    default_lat: domain.default_lat ?? null,
+    default_lng: domain.default_lng ?? null,
+    live_gps_lat: domain.live_gps_lat ?? null,
+    live_gps_lng: domain.live_gps_lng ?? null,
+    live_gps_accuracy: domain.live_gps_accuracy ?? null,
+    live_gps_timestamp: domain.live_gps_timestamp ?? null,
+    status: domain.status ?? 'offline',
+    live_location: null,
+    is_claimed: domain.is_claimed ?? null,
+    claimed_at: domain.claimed_at ?? null,
+    claimed_by: domain.claimed_by ?? null,
+    claim_verification_method: domain.claim_verification_method ?? null,
+    last_updated_at: null,
+    user_id: null,
+    review_status: null,
+    slug: generateSlug(domain.name || 'unknown-truck'),
+    view_count: domain.view_count ?? 0,
+  };
+};

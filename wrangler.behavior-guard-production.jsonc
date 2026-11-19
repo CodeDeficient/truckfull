@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "truckfull-behavior-guard-production",
+  "main": "worker/behaviorGuard.mjs",
+  "build": {
+    "command": "node scripts/deploy/validate-reliability-safeguards.mjs",
+  },
+  "compatibility_date": "2026-11-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "truckfull.food/*", "zone_name": "truckfull.food" },
+    { "pattern": "www.truckfull.food/*", "zone_name": "truckfull.food" },
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+  },
+  "services": [{ "binding": "ORIGIN", "service": "truckfull-container-production" }],
+  "durable_objects": {
+    "bindings": [{ "name": "COUNTER", "class_name": "BehaviorCounter" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BehaviorCounter"] }],
+}

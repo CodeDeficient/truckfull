@@ -1,0 +1,272 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { v4 as uuidv4 } from 'uuid';
+
+describe('Food Trucks Database Integration', () => {
+  const supabase = getSupabaseAdmin();
+  let testTruckId: string;
+
+  beforeAll(async () => {
+    // Create a test food truck
+    const { data, error } = await supabase
+      .from('food_trucks')
+      .insert({
+        name: 'Test Food Truck',
+        description: 'A test food truck for integration testing',
+        cuisine_type: ['Mexican'],
+        owner_id: 'test-owner-id',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create test food truck: ${error.message}`);
+    }
+
+    testTruckId = data.id;
+  });
+
+  afterAll(async () => {
+    // Clean up test data
+    await supabase
+      .from('food_trucks')
+      .delete()
+      .eq('id', testTruckId);
+  });
+
+  describe('CRUD Operations', () => {
+    it('should create a new food truck', async () => {
+      const newTruck = {
+        name: 'New Test Truck',
+        description: 'Another test food truck',
+        cuisine_type: ['Italian'],
+        owner_id: 'test-owner-id-2',
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert(newTruck)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.name).toBe(newTruck.name);
+      expect(data.description).toBe(newTruck.description);
+      expect(data.cuisine_type).toEqual(newTruck.cuisine_type);
+      expect(data.owner_id).toBe(newTruck.owner_id);
+
+      // Clean up
+      await supabase
+        .from('food_trucks')
+        .delete()
+        .eq('id', data.id);
+    });
+
+    it('should read food trucks', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .eq('id', testTruckId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+      expect(data.name).toBe('Test Food Truck');
+    });
+
+    it('should update a food truck', async () => {
+      const updateData = {
+        name: 'Updated Test Truck',
+        description: 'An updated test food truck',
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .update(updateData)
+        .eq('id', testTruckId)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.name).toBe(updateData.name);
+      expect(data.description).toBe(updateData.description);
+    });
+
+    it('should delete a food truck', async () => {
+      // Create a truck to delete
+      const { data: newTruck, error: createError } = await supabase
+        .from('food_trucks')
+        .insert({
+          name: 'Truck to Delete',
+          description: 'This truck will be deleted',
+          cuisine_type: ['American'],
+          owner_id: 'test-owner-id-3',
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        throw new Error(`Failed to create truck for deletion: ${createError.message}`);
+      }
+
+      const { error } = await supabase
+        .from('food_trucks')
+        .delete()
+        .eq('id', newTruck.id);
+
+      expect(error).toBeNull();
+
+      // Verify deletion
+      const { data: deletedTruck, error: readError } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .eq('id', newTruck.id)
+        .maybeSingle();
+
+      expect(readError).toBeNull();
+      expect(deletedTruck).toBeNull();
+    });
+  });
+
+  describe('Data Integrity', () => {
+    it('should enforce required fields', async () => {
+      const { error } = await supabase
+        .from('food_trucks')
+        .insert({
+          // Missing required name field
+          description: 'Test truck without name',
+        });
+
+      expect(error).toBeDefined();
+      expect(error?.message).toContain('null value in column "name"');
+    });
+
+    it('should handle array fields correctly', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .update({
+          cuisine_type: ['Mexican', 'Italian', 'American'],
+        })
+        .eq('id', testTruckId)
+        .select('cuisine_type')
+        .single();
+
+      expect(error).toBeNull();
+      expect(data.cuisine_type).toEqual(['Mexican', 'Italian', 'American']);
+    });
+  });
+
+  describe('Relationships', () => {
+    let testUserId: string;
+    let testFavoriteId: string;
+
+    beforeAll(async () => {
+      // Create a test user
+      const { data: userData, error: userError } = await supabase
+        .from('profiles')
+        .insert({
+          id: uuidv4(),
+          email: 'test@example.com',
+          full_name: 'Test User',
+        })
+        .select()
+        .single();
+
+      if (userError) {
+        throw new Error(`Failed to create test user: ${userError.message}`);
+      }
+
+      testUserId = userData.id;
+    });
+
+    afterAll(async () => {
+      // Clean up test user
+      await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', testUserId);
+    });
+
+    it('should handle user favorites relationship', async () => {
+      // Create a favorite
+      const { data: favoriteData, error: favoriteError } = await supabase
+        .from('user_favorites')
+        .insert({
+          user_id: testUserId,
+          truck_id: testTruckId,
+        })
+        .select()
+        .single();
+
+      if (favoriteError) {
+        throw new Error(`Failed to create favorite: ${favoriteError.message}`);
+      }
+
+      testFavoriteId = favoriteData.id;
+
+      // Verify the relationship
+      const { data: favorites, error } = await supabase
+        .from('user_favorites')
+        .select('*, food_trucks(name)')
+        .eq('user_id', testUserId)
+        .eq('truck_id', testTruckId);
+
+      expect(error).toBeNull();
+      expect(favorites).toHaveLength(1);
+      expect(favorites[0].food_trucks.name).toBe('Updated Test Truck');
+    });
+
+    it('should cascade delete favorites when truck is deleted', async () => {
+      // This test assumes proper foreign key constraints are set up
+      // In a real scenario, you would verify the cascade delete behavior
+      expect(testFavoriteId).toBeDefined();
+    });
+  });
+
+  describe('Performance', () => {
+    it('should efficiently query food trucks with filters', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .ilike('name', '%Test%')
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBe(true);
+    });
+
+    it('should handle large result sets', async () => {
+      // Insert multiple test trucks
+      const testTrucks = Array.from({ length: 50 }, (_, i) => ({
+        name: `Bulk Test Truck ${i}`,
+        description: `Test truck #${i} for bulk operations`,
+        cuisine_type: ['Test'],
+        owner_id: 'bulk-test-owner',
+      }));
+
+      const { error: insertError } = await supabase
+        .from('food_trucks')
+        .insert(testTrucks);
+
+      expect(insertError).toBeNull();
+
+      // Query the trucks
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .ilike('name', 'Bulk Test Truck%')
+        .limit(100);
+
+      expect(error).toBeNull();
+      expect(data.length).toBeGreaterThanOrEqual(50);
+
+      // Clean up
+      await supabase
+        .from('food_trucks')
+        .delete()
+        .ilike('name', 'Bulk Test Truck%');
+    });
+  });
+});

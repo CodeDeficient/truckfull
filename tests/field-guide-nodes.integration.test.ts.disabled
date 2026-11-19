@@ -1,0 +1,1182 @@
+/**
+ * @jest-environment node
+ *
+ * Field Guide API Integration Tests
+ *
+ * Tests the /api/field-guide/nodes endpoint with real database calls.
+ * Verifies tier-based access control, query parameter validation,
+ * RPC function integration, rate limiting, caching, and error handling.
+ */
+
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
+import { createClient } from '@supabase/supabase-js';
+import { DatabaseTestUtils } from './utils/testUtils';
+
+const RateLimiter = require('../../lib/security/rateLimiter');
+
+// Admin client for test data setup (as per requirement)
+const adminClient = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+);
+
+// Test user IDs for different tiers (will be created or fetched from database)
+let testFreeUserId: string | null = null;
+let testStarterUserId: string | null = null;
+let testProUserId: string | null = null;
+let testEnterpriseUserId: string | null = null;
+let testAdminUserId: string | null = null;
+
+// Valid coordinates for testing (Atlanta, GA area)
+const VALID_LAT = '33.7490';
+const VALID_LNG = '-84.3880';
+
+describe('Field Guide API - Integration Tests', () => {
+  beforeAll(async () => {
+    // Ensure database connection is available
+    const isDbAvailable = await DatabaseTestUtils.checkConnection();
+    if (!isDbAvailable) {
+      console.warn('Database not available, skipping integration tests');
+      return;
+    }
+
+    // Fetch or create test users with different tiers
+    // In a real scenario, these would exist in the staging database
+    const { data: profiles } = await adminClient
+      .from('profiles')
+      .select('id, subscription_tier, role')
+      .in('subscription_tier', ['free', 'starter', 'pro', 'enterprise']);
+
+    if (profiles) {
+      testFreeUserId = profiles.find((p) => p.subscription_tier === 'free')?.id ?? null;
+      testStarterUserId = profiles.find((p) => p.subscription_tier === 'starter')?.id ?? null;
+      testProUserId = profiles.find((p) => p.subscription_tier === 'pro')?.id ?? null;
+      testEnterpriseUserId = profiles.find((p) => p.subscription_tier === 'enterprise')?.id ?? null;
+      testAdminUserId = profiles.find((p) => p.role === 'admin')?.id ?? null;
+    }
+
+    console.log('Test users loaded:', {
+      free: testFreeUserId,
+      starter: testStarterUserId,
+      pro: testProUserId,
+      enterprise: testEnterpriseUserId,
+      admin: testAdminUserId,
+    });
+  });
+
+  afterAll(async () => {
+    // Clean up rate limit data from tests
+    RateLimiter.clearLimits('test-client-field-guide');
+  });
+
+  beforeEach(() => {
+    // Clear rate limit before each test to avoid interference
+    RateLimiter.clearLimits('test-client-field-guide');
+  });
+
+  describe('Query Parameter Validation', () => {
+    it('returns 400 when lat parameter is missing', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+      expect(body.details).toBeDefined();
+    });
+
+    it('returns 400 when lng parameter is missing', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&radius=5000&limit=10`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+      expect(body.details).toBeDefined();
+    });
+
+    it('returns 400 when lat is outside valid range (-90 to 90)', async () => {
+      const response1 = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=91&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+      const body1 = await response1.json();
+      expect(response1.status).toBe(400);
+      expect(body1.error).toBe('Invalid parameters');
+
+      const response2 = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=-91&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+      const body2 = await response2.json();
+      expect(response2.status).toBe(400);
+      expect(body2.error).toBe('Invalid parameters');
+    });
+
+    it('returns 400 when lng is outside valid range (-180 to 180)', async () => {
+      const response1 = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=181&radius=5000&limit=10`,
+      );
+      const body1 = await response1.json();
+      expect(response1.status).toBe(400);
+      expect(body1.error).toBe('Invalid parameters');
+
+      const response2 = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=-181&radius=5000&limit=10`,
+      );
+      const body2 = await response2.json();
+      expect(response2.status).toBe(400);
+      expect(body2.error).toBe('Invalid parameters');
+    });
+
+    it('returns 400 when radius is less than 100 meters', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=50&limit=10`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+    });
+
+    it('returns 400 when radius is greater than 500km (500,000 meters)', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=500001&limit=10`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+    });
+
+    it('returns 400 when limit is greater than 40,000', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=40001`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+    });
+
+    it('returns 400 when parameters are invalid strings', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=invalid&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+    });
+
+    it('accepts valid parameters and returns 200', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('uses default values for optional radius and limit', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}`,
+      );
+
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.query).toBeDefined();
+      expect(body.query.radius).toBe(5000); // Default radius
+      expect(body.query.limit).toBeLessThanOrEqual(1000); // Default limit (capped by tier)
+    });
+  });
+
+  describe('Tier-Based Access Control', () => {
+    // Note: These tests require valid test users with specific tiers
+    // If the staging database doesn't have these users, tests will be skipped
+
+    it('returns 403 for free tier users (Field Guide requires Starter+)', async () => {
+      if (!testFreeUserId) {
+        console.warn('No free tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testFreeUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.error).toBe('Upgrade required');
+      expect(body.message).toContain('Field Guide is available for Starter and Pro tiers');
+      expect(body.upgradeTarget).toBe('starter');
+    });
+
+    it('returns 403 for unauthenticated requests', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.error).toBe('Upgrade required');
+    });
+
+    it('allows access for Starter tier users', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=50`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.tier).toBe('starter');
+      // Starter tier should be limited to 20 nodes
+      expect(body.count).toBeLessThanOrEqual(20);
+      expect(body.query.limit).toBeLessThanOrEqual(20);
+    });
+
+    it('allows access for Pro tier users', async () => {
+      if (!testProUserId) {
+        console.warn('No pro tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=200`,
+        {
+          headers: {
+            'x-test-user-id': testProUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.tier).toBe('pro');
+      // Pro tier should be limited to 100 nodes
+      expect(body.count).toBeLessThanOrEqual(100);
+      expect(body.query.limit).toBeLessThanOrEqual(100);
+    });
+
+    it('allows access for Enterprise tier users', async () => {
+      if (!testEnterpriseUserId) {
+        console.warn('No enterprise tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=1000`,
+        {
+          headers: {
+            'x-test-user-id': testEnterpriseUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.tier).toBe('enterprise');
+      // Enterprise tier should be limited to 40,000 nodes
+      expect(body.count).toBeLessThanOrEqual(40000);
+      expect(body.query.limit).toBeLessThanOrEqual(40000);
+    });
+
+    it('admin users bypass tier restrictions (full access)', async () => {
+      if (!testAdminUserId) {
+        console.warn('No admin test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=1000`,
+        {
+          headers: {
+            'x-test-user-id': testAdminUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Admins should be treated as enterprise tier
+      expect(body.tier).toBe('enterprise');
+      // Admins can request up to 40,000 nodes
+      expect(body.query.limit).toBeLessThanOrEqual(40000);
+    });
+
+    it('Starter tier limit caps to 20 regardless of requested limit', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=100`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+      expect(body.tier).toBe('starter');
+      expect(body.query.limit).toBeLessThanOrEqual(20);
+      expect(body.count).toBeLessThanOrEqual(20);
+    });
+
+    it('Pro tier limit caps to 100 regardless of requested limit', async () => {
+      if (!testProUserId) {
+        console.warn('No pro tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=500`,
+        {
+          headers: {
+            'x-test-user-id': testProUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+      expect(body.tier).toBe('pro');
+      expect(body.query.limit).toBeLessThanOrEqual(100);
+      expect(body.count).toBeLessThanOrEqual(100);
+    });
+
+    it('Enterprise tier limit caps to 40,000 regardless of requested limit', async () => {
+      if (!testEnterpriseUserId) {
+        console.warn('No enterprise tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=50000`,
+        {
+          headers: {
+            'x-test-user-id': testEnterpriseUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+      expect(body.tier).toBe('enterprise');
+      expect(body.query.limit).toBeLessThanOrEqual(40000);
+      expect(body.count).toBeLessThanOrEqual(40000);
+    });
+  });
+
+  describe('RPC Function Integration', () => {
+    it('calls find_nearby_traffic_nodes RPC function correctly', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const lat = VALID_LAT;
+      const lng = VALID_LNG;
+      const radius = 5000;
+      const limit = 10;
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${lat}&lng=${lng}&radius=${radius}&limit=${limit}`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      // Verify the RPC was called by checking the response structure
+      expect(body.nodes).toBeDefined();
+      expect(Array.isArray(body.nodes)).toBe(true);
+    });
+
+    it('calls get_location_traffic_score RPC function correctly', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      // Verify area_stats from get_location_traffic_score is present
+      expect(body.area_stats).toBeDefined();
+      expect(typeof body.area_stats === 'object' || body.area_stats === null).toBe(true);
+    });
+
+    it('passes effectiveLimit (tier-respected) to RPC function', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      // Request 100 nodes, but Starter tier should cap at 20
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=100`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      // The effective limit passed to RPC should be 20 (Starter tier limit)
+      expect(body.query.limit).toBeLessThanOrEqual(20);
+      expect(body.count).toBeLessThanOrEqual(20);
+    });
+
+    it('returns data array from find_nearby_traffic_nodes', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      expect(body.nodes).toBeDefined();
+      expect(Array.isArray(body.nodes)).toBe(true);
+      // Each node should be an object
+      if (body.nodes.length > 0) {
+        expect(typeof body.nodes[0]).toBe('object');
+        expect(body.nodes[0]).not.toBeNull();
+      }
+    });
+
+    it('returns area_stats object from get_location_traffic_score', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      expect(body.area_stats).toBeDefined();
+      // area_stats can be null if no data is available
+      if (body.area_stats !== null) {
+        expect(typeof body.area_stats).toBe('object');
+      }
+    });
+
+    it('area_stats contains expected fields', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      if (body.area_stats !== null) {
+        // Verify expected fields are present
+        expect(body.area_stats).toHaveProperty('station_count');
+        expect(body.area_stats).toHaveProperty('avg_aadt');
+        expect(body.area_stats).toHaveProperty('max_aadt');
+        expect(body.area_stats).toHaveProperty('percentile_score');
+        expect(body.area_stats).toHaveProperty('traffic_level');
+
+        // Verify types
+        expect(typeof body.area_stats.station_count).toBe('number');
+        expect(typeof body.area_stats.avg_aadt).toBe('number');
+        expect(typeof body.area_stats.max_aadt).toBe('number');
+        expect(typeof body.area_stats.percentile_score).toBe('number');
+        expect(typeof body.area_stats.traffic_level).toBe('string');
+      }
+    });
+
+    it('returns empty nodes array when no traffic nodes found in area', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      // Use coordinates in a remote area unlikely to have traffic nodes
+      const remoteLat = '0.0';
+      const remoteLng = '0.0';
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${remoteLat}&lng=${remoteLng}&radius=1000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+
+      expect(body.nodes).toBeDefined();
+      expect(Array.isArray(body.nodes)).toBe(true);
+      // Should be empty or have very few nodes in remote area
+      expect(body.count).toBe(body.nodes.length);
+    });
+  });
+
+  describe('Response Format', () => {
+    it('returns 200 status on success', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('returns JSON with all expected fields', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      // Verify all top-level fields exist
+      expect(body).toHaveProperty('tier');
+      expect(body).toHaveProperty('area_stats');
+      expect(body).toHaveProperty('nodes');
+      expect(body).toHaveProperty('count');
+      expect(body).toHaveProperty('query');
+    });
+
+    it('count matches nodes array length', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      expect(body.count).toBeDefined();
+      expect(typeof body.count).toBe('number');
+      expect(body.count).toBe(body.nodes.length);
+    });
+
+    it('query echoes back request parameters', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const lat = VALID_LAT;
+      const lng = VALID_LNG;
+      const radius = 3000;
+      const limit = 15;
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${lat}&lng=${lng}&radius=${radius}&limit=${limit}`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      expect(body.query).toBeDefined();
+      expect(body.query.lat).toBe(Number(lat));
+      expect(body.query.lng).toBe(Number(lng));
+      expect(body.query.radius).toBe(radius);
+      // Limit may be capped by tier, so check it's less than or equal to requested
+      expect(body.query.limit).toBeLessThanOrEqual(limit);
+    });
+
+    it('tier field correctly reflects user tier', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      expect(body.tier).toBeDefined();
+      expect(['starter', 'pro', 'enterprise', 'free']).toContain(body.tier);
+    });
+
+    it('nodes is array of traffic node objects', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      expect(body.nodes).toBeDefined();
+      expect(Array.isArray(body.nodes)).toBe(true);
+
+      // If nodes exist, verify they are objects
+      if (body.nodes.length > 0) {
+        body.nodes.forEach((node: unknown) => {
+          expect(typeof node).toBe('object');
+          expect(node).not.toBeNull();
+        });
+      }
+    });
+
+    it('returns JSON content-type header', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.headers.get('content-type')).toContain('application/json');
+    });
+  });
+
+  describe('Rate Limiting', () => {
+    it('endpoint has rate limiting per user/IP', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      // Make multiple requests to test rate limiting
+      const requests: Promise<Response>[] = [];
+      for (let i = 0; i < 65; i++) {
+        // Exceed the 60 requests per minute limit
+        requests.push(
+          fetch(
+            `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+            {
+              headers: {
+                'x-test-user-id': testStarterUserId,
+              },
+            },
+          ),
+        );
+      }
+
+      const responses = await Promise.all(requests);
+
+      // At least one should be rate limited (429)
+      const rateLimited = responses.filter((r) => r.status === 429);
+      expect(rateLimited.length).toBeGreaterThan(0);
+    });
+
+    it('exceeding limit returns 429 status', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      // Make more than 60 requests to trigger rate limit
+      const requests: Promise<Response>[] = [];
+      for (let i = 0; i < 61; i++) {
+        requests.push(
+          fetch(
+            `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+            {
+              headers: {
+                'x-test-user-id': testStarterUserId,
+              },
+            },
+          ),
+        );
+      }
+
+      const responses = await Promise.all(requests);
+      const lastResponse = responses[responses.length - 1];
+
+      // Last request should be rate limited
+      expect(lastResponse.status).toBe(429);
+      const body = await lastResponse.json();
+      expect(body.error).toBe('Too many requests');
+    });
+
+    it('Retry-After header is present when rate limited', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      // Make enough requests to trigger rate limiting
+      const requests: Promise<Response>[] = [];
+      for (let i = 0; i < 61; i++) {
+        requests.push(
+          fetch(
+            `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+            {
+              headers: {
+                'x-test-user-id': testStarterUserId,
+              },
+            },
+          ),
+        );
+      }
+
+      const responses = await Promise.all(requests);
+      const rateLimitedResponse = responses.find((r) => r.status === 429);
+
+      if (rateLimitedResponse) {
+        const retryAfter = rateLimitedResponse.headers.get('retry-after');
+        expect(retryAfter).toBeTruthy();
+        expect(Number(retryAfter)).toBeGreaterThan(0);
+      }
+    });
+
+    it('different users have independent rate limits', async () => {
+      if (!testStarterUserId || !testProUserId) {
+        console.warn('Insufficient test users found, skipping test');
+        return;
+      }
+
+      // Make 60 requests for starter user (should hit limit)
+      const starterRequests: Promise<Response>[] = [];
+      for (let i = 0; i < 60; i++) {
+        starterRequests.push(
+          fetch(
+            `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+            {
+              headers: {
+                'x-test-user-id': testStarterUserId,
+              },
+            },
+          ),
+        );
+      }
+
+      await Promise.all(starterRequests);
+
+      // Pro user should still be able to make requests
+      const proResponse = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testProUserId,
+          },
+        },
+      );
+
+      expect(proResponse.status).toBe(200);
+    });
+
+    it('rate limit resets after time window expires', async () => {
+      // This test is difficult to run in practice due to the 1-minute window
+      // In a real test suite, you might mock the RateLimiter's time
+      // For now, we'll skip this test or make it optional
+      console.warn('Rate limit reset test requires time mocking, skipping');
+    });
+  });
+
+  describe('Caching', () => {
+    it('response includes Cache-Control header', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const cacheControl = response.headers.get('cache-control');
+      expect(cacheControl).toBeTruthy();
+      expect(cacheControl).toContain('public');
+      expect(cacheControl).toContain('max-age=3600');
+    });
+
+    it('response includes CDN-Cache-Control header', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const cdnCacheControl = response.headers.get('cdn-cache-control');
+      expect(cdnCacheControl).toBeTruthy();
+      expect(cdnCacheControl).toContain('public');
+      expect(cdnCacheControl).toContain('max-age=3600');
+    });
+
+    it('response includes Vercel-CDN-Cache-Control header', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const vercelCacheControl = response.headers.get('vercel-cdn-cache-control');
+      expect(vercelCacheControl).toBeTruthy();
+      expect(vercelCacheControl).toContain('public');
+      expect(vercelCacheControl).toContain('max-age=3600');
+    });
+
+    it('cache is public with max-age=3600 (1 hour)', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const cacheControl = response.headers.get('cache-control');
+      expect(cacheControl).toContain('public');
+      expect(cacheControl).toContain('max-age=3600');
+    });
+
+    it('cache includes s-maxage for CDN caching', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const cacheControl = response.headers.get('cache-control');
+      expect(cacheControl).toContain('s-maxage=3600');
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('returns 500 on database error', async () => {
+      // This test would require mocking the database to fail
+      // In a real integration test, you might temporarily break the DB connection
+      // For now, we'll skip this test or make it optional
+      console.warn('Database error test requires DB mocking, skipping');
+    });
+
+    it('returns 500 on RPC function error', async () => {
+      // This test would require mocking the RPC function to fail
+      // In a real integration test, you might use invalid RPC parameters
+      // For now, we'll skip this test or make it optional
+      console.warn('RPC error test requires function mocking, skipping');
+    });
+
+    it('returns 400 with details for invalid parameters', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=invalid&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.error).toBe('Invalid parameters');
+      expect(body.details).toBeDefined();
+      expect(Array.isArray(body.details)).toBe(true);
+    });
+
+    it('error response includes meaningful error message', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=invalid&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      const body = await response.json();
+      expect(body.error).toBeDefined();
+      expect(typeof body.error).toBe('string');
+      expect(body.error.length).toBeGreaterThan(0);
+    });
+
+    it('error response includes JSON content-type', async () => {
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=invalid&lng=${VALID_LNG}&radius=5000&limit=10`,
+      );
+
+      expect(response.headers.get('content-type')).toContain('application/json');
+    });
+  });
+
+  describe('Integration Scenarios', () => {
+    it('complete workflow: valid request returns correct data structure', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=20`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+
+      // Verify complete response structure
+      expect(body).toHaveProperty('tier');
+      expect(body).toHaveProperty('area_stats');
+      expect(body).toHaveProperty('nodes');
+      expect(body).toHaveProperty('count');
+      expect(body).toHaveProperty('query');
+
+      // Verify data types
+      expect(typeof body.tier).toBe('string');
+      expect(typeof body.count).toBe('number');
+      expect(Array.isArray(body.nodes)).toBe(true);
+      expect(typeof body.query).toBe('object');
+
+      // Verify logical conditions
+      expect(body.count).toBe(body.nodes.length);
+      expect(body.query.limit).toBeLessThanOrEqual(20); // Starter tier limit
+
+      // Verify cache headers
+      const cacheControl = response.headers.get('cache-control');
+      expect(cacheControl).toContain('max-age=3600');
+    });
+
+    it('different tiers get different node limits for same query', async () => {
+      if (!testStarterUserId || !testProUserId || !testEnterpriseUserId) {
+        console.warn('Insufficient test users found, skipping test');
+        return;
+      }
+
+      // Same query for all tiers
+      const queryString = `lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=100`;
+
+      // Starter tier request
+      const starterResponse = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?${queryString}`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+      const starterBody = await starterResponse.json();
+
+      // Pro tier request
+      const proResponse = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?${queryString}`,
+        {
+          headers: {
+            'x-test-user-id': testProUserId,
+          },
+        },
+      );
+      const proBody = await proResponse.json();
+
+      // Enterprise tier request
+      const enterpriseResponse = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?${queryString}`,
+        {
+          headers: {
+            'x-test-user-id': testEnterpriseUserId,
+          },
+        },
+      );
+      const enterpriseBody = await enterpriseResponse.json();
+
+      // Verify tier limits
+      expect(starterBody.count).toBeLessThanOrEqual(20);
+      expect(proBody.count).toBeLessThanOrEqual(100);
+      expect(enterpriseBody.count).toBeLessThanOrEqual(40000);
+
+      // Verify tier fields are correct
+      expect(starterBody.tier).toBe('starter');
+      expect(proBody.tier).toBe('pro');
+      expect(enterpriseBody.tier).toBe('enterprise');
+    });
+
+    it('area_stats are consistent across multiple requests for same location', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const queryString = `lat=${VALID_LAT}&lng=${VALID_LNG}&radius=5000&limit=10`;
+
+      const response1 = await fetch(`http://localhost:3000/api/field-guide/nodes?${queryString}`, {
+        headers: {
+          'x-test-user-id': testStarterUserId,
+        },
+      });
+      const body1 = await response1.json();
+
+      const response2 = await fetch(`http://localhost:3000/api/field-guide/nodes?${queryString}`, {
+        headers: {
+          'x-test-user-id': testStarterUserId,
+        },
+      });
+      const body2 = await response2.json();
+
+      // area_stats should be the same for the same location
+      if (body1.area_stats !== null && body2.area_stats !== null) {
+        expect(body1.area_stats.station_count).toBe(body2.area_stats.station_count);
+        expect(body1.area_stats.avg_aadt).toBe(body2.area_stats.avg_aadt);
+        expect(body1.area_stats.max_aadt).toBe(body2.area_stats.max_aadt);
+        expect(body1.area_stats.percentile_score).toBe(body2.area_stats.percentile_score);
+        expect(body1.area_stats.traffic_level).toBe(body2.area_stats.traffic_level);
+      }
+    });
+
+    it('query parameters are correctly passed to backend', async () => {
+      if (!testStarterUserId) {
+        console.warn('No starter tier test user found, skipping test');
+        return;
+      }
+
+      const lat = VALID_LAT;
+      const lng = VALID_LNG;
+      const radius = 7500;
+      const limit = 25;
+
+      const response = await fetch(
+        `http://localhost:3000/api/field-guide/nodes?lat=${lat}&lng=${lng}&radius=${radius}&limit=${limit}`,
+        {
+          headers: {
+            'x-test-user-id': testStarterUserId,
+          },
+        },
+      );
+
+      const body = await response.json();
+
+      // Verify query parameters are echoed correctly
+      expect(body.query.lat).toBe(Number(lat));
+      expect(body.query.lng).toBe(Number(lng));
+      expect(body.query.radius).toBe(radius);
+      expect(body.query.limit).toBeLessThanOrEqual(limit); // May be capped by tier
+    });
+  });
+});

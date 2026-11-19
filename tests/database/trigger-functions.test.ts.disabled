@@ -1,0 +1,853 @@
+/**
+ * @jest-environment node
+ */
+
+import {
+  jest,
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+} from '@jest/globals';
+
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+
+const adminClient = getSupabaseAdmin();
+
+interface TestOrganizer {
+  id: string;
+  business_name: string;
+  contact_email: string;
+  rating_avg: number;
+  rating_count: number;
+}
+
+interface TestFoodTruck {
+  id: string;
+  name: string;
+  current_location: any;
+  location_geog: string | null;
+}
+
+interface TestFcmToken {
+  id: string;
+  user_id: string;
+  token: string;
+  updated_at: string;
+}
+
+interface TestOrganizerReview {
+  id: string;
+  organizer_id: string;
+  reviewer_id: string;
+  event_id: string;
+  rating: number;
+  comment: string | null;
+}
+
+const testOrganizers: TestOrganizer[] = [];
+const testFoodTrucks: TestFoodTruck[] = [];
+const testFcmTokens: TestFcmToken[] = [];
+const testOrganizerReviews: TestOrganizerReview[] = [];
+
+describe('Database Trigger Functions Integration Tests', () => {
+  beforeAll(async () => {
+    if (!supabaseUrl || !serviceRoleKey) {
+      throw new Error('Missing required environment variables');
+    }
+  });
+
+  afterAll(async () => {
+    const ids = testOrganizers.map((o) => o.id);
+    if (ids.length > 0) {
+      await adminClient.from('event_organizers').delete().in('id', ids);
+    }
+
+    const truckIds = testFoodTrucks.map((t) => t.id);
+    if (truckIds.length > 0) {
+      await adminClient.from('food_trucks').delete().in('id', truckIds);
+    }
+
+    const tokenIds = testFcmTokens.map((t) => t.id);
+    if (tokenIds.length > 0) {
+      await adminClient.from('fcm_tokens').delete().in('id', tokenIds);
+    }
+
+    const reviewIds = testOrganizerReviews.map((r) => r.id);
+    if (reviewIds.length > 0) {
+      await adminClient.from('organizer_reviews').delete().in('id', reviewIds);
+    }
+  });
+
+  describe('update_location_geog trigger', () => {
+    beforeEach(async () => {
+      const { data, error } = await adminClient
+        .from('food_trucks')
+        .insert({
+          name: `Test Truck ${Date.now()}`,
+          current_location: null,
+          is_active: true,
+        })
+        .select('id, name, current_location, location_geog')
+        .single();
+
+      if (error) throw error;
+      testFoodTrucks.push(data as TestFoodTruck);
+    });
+
+    afterEach(async () => {
+      const lastTruck = testFoodTrucks.pop();
+      if (lastTruck) {
+        await adminClient.from('food_trucks').delete().eq('id', lastTruck.id);
+      }
+    });
+
+    it('should set location_geog from lat/lng in current_location on INSERT', async () => {
+      const truck = testFoodTrucks[testFoodTrucks.length - 1];
+
+      const { data: updatedData, error } = await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: { lat: 33.749, lng: -84.388, address: 'Peachtree St NE' },
+        })
+        .eq('id', truck.id)
+        .select('id, name, current_location, location_geog')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        expect(updatedData.location_geog).not.toBeNull();
+        expect(typeof updatedData.location_geog).toBe('string');
+
+        const geogString = updatedData.location_geog;
+        expect(geogString).toContain('POINT');
+      }
+    });
+
+    it('should set location_geog from latitude/longitude in current_location on INSERT', async () => {
+      const truck = testFoodTrucks[testFoodTrucks.length - 1];
+
+      const { data: updatedData, error } = await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: { latitude: 34.0522, longitude: -118.2437 },
+        })
+        .eq('id', truck.id)
+        .select('id, name, current_location, location_geog')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        expect(updatedData.location_geog).not.toBeNull();
+        expect(typeof updatedData.location_geog).toBe('string');
+      }
+    });
+
+    it('should set location_geog to null when current_location is null', async () => {
+      const truck = testFoodTrucks[testFoodTrucks.length - 1];
+
+      const { data: updatedData, error } = await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: null,
+        })
+        .eq('id', truck.id)
+        .select('id, name, current_location, location_geog')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        expect(updatedData.location_geog).toBeNull();
+      }
+    });
+
+    it('should update location_geog when lat/lng changes on UPDATE', async () => {
+      const truck = testFoodTrucks[testFoodTrucks.length - 1];
+
+      await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: { lat: 33.749, lng: -84.388 },
+        })
+        .eq('id', truck.id);
+
+      const { data: updatedData, error } = await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: { lat: 33.751, lng: -84.39 },
+        })
+        .eq('id', truck.id)
+        .select('id, location_geog')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        expect(updatedData.location_geog).not.toBeNull();
+        expect(typeof updatedData.location_geog).toBe('string');
+      }
+    });
+
+    it('should create valid PostGIS geography string', async () => {
+      const truck = testFoodTrucks[testFoodTrucks.length - 1];
+
+      const { data: updatedData, error } = await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: { lat: 33.749, lng: -84.388 },
+        })
+        .eq('id', truck.id)
+        .select('location_geog')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        const geogString = updatedData.location_geog;
+        expect(geogString).toMatch(/POINT\(-?\d+\.\d+\s+-?\d+\.\d+\)/);
+      }
+    });
+
+    it('should allow distance calculations with generated location_geog', async () => {
+      const truck1 = testFoodTrucks[testFoodTrucks.length - 1];
+
+      const { data: truck2Data, error: truck2Error } = await adminClient
+        .from('food_trucks')
+        .insert({
+          name: `Test Truck 2 ${Date.now()}`,
+          current_location: { lat: 33.75, lng: -84.389 },
+          is_active: true,
+        })
+        .select('id, location_geog')
+        .single();
+
+      expect(truck2Error).toBeNull();
+      expect(truck2Data).not.toBeNull();
+
+      await adminClient
+        .from('food_trucks')
+        .update({
+          current_location: { lat: 33.749, lng: -84.388 },
+        })
+        .eq('id', truck1.id);
+
+      const { data: finalTruck, error } = await adminClient
+        .from('food_trucks')
+        .select('id, location_geog')
+        .eq('id', truck1.id)
+        .single();
+
+      expect(error).toBeNull();
+      expect(finalTruck).not.toBeNull();
+      if (finalTruck) {
+        expect(finalTruck.location_geog).not.toBeNull();
+        expect(typeof finalTruck.location_geog).toBe('string');
+      }
+    });
+  });
+
+  describe('update_fcm_token_timestamp trigger', () => {
+    beforeEach(async () => {
+      const testUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      const { data, error } = await adminClient
+        .from('fcm_tokens')
+        .insert({
+          user_id: testUserId,
+          token: `test_token_${Date.now()}`,
+          device_type: 'web',
+          active: true,
+        })
+        .select('id, user_id, token, updated_at')
+        .single();
+
+      if (error) throw error;
+      testFcmTokens.push(data as TestFcmToken);
+    });
+
+    afterEach(async () => {
+      const lastToken = testFcmTokens.pop();
+      if (lastToken) {
+        await adminClient.from('fcm_tokens').delete().eq('id', lastToken.id);
+      }
+    });
+
+    it('should create initial updated_at on INSERT', async () => {
+      const token = testFcmTokens[testFcmTokens.length - 1];
+
+      const { data: fetchedData, error } = await adminClient
+        .from('fcm_tokens')
+        .select('id, user_id, token, updated_at')
+        .eq('id', token.id)
+        .single();
+
+      expect(error).toBeNull();
+      expect(fetchedData).not.toBeNull();
+      if (fetchedData) {
+        expect(fetchedData.updated_at).not.toBeNull();
+        expect(typeof new Date(fetchedData.updated_at).getTime()).toBe('number');
+      }
+    });
+
+    it('should update updated_at on UPDATE', async () => {
+      const token = testFcmTokens[testFcmTokens.length - 1];
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const { data: updatedData, error } = await adminClient
+        .from('fcm_tokens')
+        .update({
+          active: false,
+        })
+        .eq('id', token.id)
+        .select('id, user_id, token, updated_at')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        expect(new Date(updatedData.updated_at).getTime()).toBeGreaterThan(
+          new Date(token.updated_at).getTime(),
+        );
+      }
+    });
+
+    it('should increment updated_at on multiple updates', async () => {
+      const token = testFcmTokens[testFcmTokens.length - 1];
+
+      let previousUpdated = new Date(token.updated_at).getTime();
+
+      for (let i = 0; i < 3; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        const { data: updatedData } = await adminClient
+          .from('fcm_tokens')
+          .update({
+            last_seen: new Date().toISOString(),
+          })
+          .eq('id', token.id)
+          .select('updated_at')
+          .single();
+
+        expect(updatedData).not.toBeNull();
+        if (updatedData) {
+          const currentUpdated = new Date(updatedData.updated_at).getTime();
+          expect(currentUpdated).toBeGreaterThanOrEqual(previousUpdated);
+          previousUpdated = currentUpdated;
+        }
+      }
+    });
+
+    it('should not modify other token fields on UPDATE', async () => {
+      const token = testFcmTokens[testFcmTokens.length - 1];
+
+      const originalToken = token.token;
+      const originalUserId = token.user_id;
+
+      const { data: updatedData, error } = await adminClient
+        .from('fcm_tokens')
+        .update({
+          active: false,
+        })
+        .eq('id', token.id)
+        .select('id, user_id, token, updated_at')
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedData).not.toBeNull();
+      if (updatedData) {
+        expect(updatedData.token).toBe(originalToken);
+        expect(updatedData.user_id).toBe(originalUserId);
+        expect(updatedData.updated_at).not.toBe(token.updated_at);
+      }
+    });
+
+    it('should set updated_at to current time, not fixed value', async () => {
+      const token = testFcmTokens[testFcmTokens.length - 1];
+
+      const { data: updatedData1, error: error1 } = await adminClient
+        .from('fcm_tokens')
+        .update({
+          active: true,
+        })
+        .eq('id', token.id)
+        .select('updated_at')
+        .single();
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const { data: updatedData2, error: error2 } = await adminClient
+        .from('fcm_tokens')
+        .update({
+          active: false,
+        })
+        .eq('id', token.id)
+        .select('updated_at')
+        .single();
+
+      expect(error1).toBeNull();
+      expect(error2).toBeNull();
+      expect(updatedData1).not.toBeNull();
+      expect(updatedData2).not.toBeNull();
+      if (updatedData1 && updatedData2) {
+        const time1 = new Date(updatedData1.updated_at).getTime();
+        const time2 = new Date(updatedData2.updated_at).getTime();
+
+        expect(time2).toBeGreaterThan(time1);
+      }
+    });
+  });
+
+  describe('update_organizer_rating trigger', () => {
+    let organizer: TestOrganizer;
+
+    beforeEach(async () => {
+      const { data, error } = await adminClient
+        .from('event_organizers')
+        .insert({
+          user_id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          business_name: `Test Organizer ${Date.now()}`,
+          contact_email: `test${Date.now()}@example.com`,
+        })
+        .select('id, business_name, contact_email, rating_avg, rating_count')
+        .single();
+
+      if (error) throw error;
+      organizer = data as TestOrganizer;
+      testOrganizers.push(organizer);
+    });
+
+    afterEach(async () => {
+      const lastOrganizer = testOrganizers.pop();
+      if (lastOrganizer) {
+        await adminClient.from('event_organizers').delete().eq('id', lastOrganizer.id);
+      }
+    });
+
+    it('should set rating_avg to first review rating and rating_count to 1 on INSERT', async () => {
+      const reviewerId = `reviewer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      const { data: reviewData, error: reviewError } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewerId,
+          event_id: eventId,
+          rating: 5,
+          comment: 'Great organizer!',
+        })
+        .select('id, organizer_id, reviewer_id, event_id, rating, comment')
+        .single();
+
+      expect(reviewError).toBeNull();
+      if (reviewData) {
+        testOrganizerReviews.push(reviewData as TestOrganizerReview);
+      }
+
+      const { data: updatedOrganizer, error: organizerError } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg, rating_count')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(organizerError).toBeNull();
+      expect(updatedOrganizer).not.toBeNull();
+      if (updatedOrganizer) {
+        expect(updatedOrganizer.rating_avg).toBe(5);
+        expect(updatedOrganizer.rating_count).toBe(1);
+      }
+    });
+
+    it('should update rating_avg to average and rating_count to 2 on second INSERT', async () => {
+      const reviewer1Id = `reviewer1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const reviewer2Id = `reviewer2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId1 = `event1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId2 = `event2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      await adminClient.from('organizer_reviews').insert({
+        organizer_id: organizer.id,
+        reviewer_id: reviewer1Id,
+        event_id: eventId1,
+        rating: 4,
+        comment: 'Good experience',
+      });
+
+      const { data: review2 } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewer2Id,
+          event_id: eventId2,
+          rating: 5,
+          comment: 'Excellent!',
+        })
+        .select('id')
+        .single();
+
+      expect(review2).not.toBeNull();
+      if (review2) {
+        testOrganizerReviews.push(review2 as unknown as TestOrganizerReview);
+      }
+
+      const { data: updatedOrganizer, error } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg, rating_count')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(error).toBeNull();
+      expect(updatedOrganizer).not.toBeNull();
+      if (updatedOrganizer) {
+        expect(updatedOrganizer.rating_avg).toBe(4.5);
+        expect(updatedOrganizer.rating_count).toBe(2);
+      }
+    });
+
+    it('should update rating_avg when review rating changes on UPDATE', async () => {
+      const reviewerId = `reviewer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      const { data: reviewData } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewerId,
+          event_id: eventId,
+          rating: 5,
+          comment: 'Great!',
+        })
+        .select('id')
+        .single();
+
+      expect(reviewData).not.toBeNull();
+      if (reviewData) {
+        testOrganizerReviews.push(reviewData as TestOrganizerReview);
+      }
+
+      const { data: updatedOrganizer1 } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(updatedOrganizer1).not.toBeNull();
+      if (updatedOrganizer1) {
+        expect(updatedOrganizer1.rating_avg).toBe(5);
+      }
+
+      if (reviewData) {
+        await adminClient
+          .from('organizer_reviews')
+          .update({
+            rating: 3,
+            comment: 'Changed my mind',
+          })
+          .eq('id', reviewData.id);
+      }
+
+      const { data: updatedOrganizer2 } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(updatedOrganizer2).not.toBeNull();
+      if (updatedOrganizer2) {
+        expect(updatedOrganizer2.rating_avg).toBe(3);
+      }
+    });
+
+    it('should recalculate average without deleted review on DELETE', async () => {
+      const reviewer1Id = `reviewer1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const reviewer2Id = `reviewer2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const reviewer3Id = `reviewer3_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId1 = `event1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId2 = `event2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId3 = `event3_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      const { data: review1 } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewer1Id,
+          event_id: eventId1,
+          rating: 5,
+          comment: 'Great!',
+        })
+        .select('id')
+        .single();
+
+      const { data: review2 } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewer2Id,
+          event_id: eventId2,
+          rating: 3,
+          comment: 'Average',
+        })
+        .select('id')
+        .single();
+
+      const { data: review3 } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewer3Id,
+          event_id: eventId3,
+          rating: 4,
+          comment: 'Good',
+        })
+        .select('id')
+        .single();
+
+      if (review1) testOrganizerReviews.push(review1 as unknown as TestOrganizerReview);
+      if (review2) testOrganizerReviews.push(review2 as unknown as TestOrganizerReview);
+      if (review3) testOrganizerReviews.push(review3 as unknown as TestOrganizerReview);
+
+      const { data: updatedOrganizer1 } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg, rating_count')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(updatedOrganizer1).not.toBeNull();
+      if (updatedOrganizer1) {
+        expect(updatedOrganizer1.rating_avg).toBe(4);
+        expect(updatedOrganizer1.rating_count).toBe(3);
+      }
+
+      if (review2) {
+        await adminClient.from('organizer_reviews').delete().eq('id', review2.id);
+      }
+
+      const { data: updatedOrganizer2 } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg, rating_count')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(updatedOrganizer2).not.toBeNull();
+      if (updatedOrganizer2) {
+        expect(updatedOrganizer2.rating_avg).toBe(4.5);
+        expect(updatedOrganizer2.rating_count).toBe(2);
+      }
+    });
+
+    it('should handle multiple organizers independently', async () => {
+      const { data: organizer2Data, error: org2Error } = await adminClient
+        .from('event_organizers')
+        .insert({
+          user_id: `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          business_name: `Second Organizer ${Date.now()}`,
+          contact_email: `second${Date.now()}@example.com`,
+        })
+        .select('id, business_name, contact_email, rating_avg, rating_count')
+        .single();
+
+      expect(org2Error).toBeNull();
+      expect(organizer2Data).not.toBeNull();
+      const organizer2 = organizer2Data as TestOrganizer;
+      if (organizer2) {
+        testOrganizers.push(organizer2);
+
+        const reviewerId1 = `reviewer1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const reviewerId2 = `reviewer2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const eventId1 = `event1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const eventId2 = `event2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        await adminClient.from('organizer_reviews').insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewerId1,
+          event_id: eventId1,
+          rating: 5,
+          comment: 'Great!',
+        });
+
+        await adminClient.from('organizer_reviews').insert({
+          organizer_id: organizer2.id,
+          reviewer_id: reviewerId2,
+          event_id: eventId2,
+          rating: 2,
+          comment: 'Poor',
+        });
+
+        const { data: updatedOrganizer1 } = await adminClient
+          .from('event_organizers')
+          .select('rating_avg, rating_count')
+          .eq('id', organizer.id)
+          .single();
+
+        const { data: updatedOrganizer2 } = await adminClient
+          .from('event_organizers')
+          .select('rating_avg, rating_count')
+          .eq('id', organizer2.id)
+          .single();
+
+        expect(updatedOrganizer1).not.toBeNull();
+        expect(updatedOrganizer2).not.toBeNull();
+        if (updatedOrganizer1 && updatedOrganizer2) {
+          expect(updatedOrganizer1.rating_avg).toBe(5);
+          expect(updatedOrganizer1.rating_count).toBe(1);
+          expect(updatedOrganizer2.rating_avg).toBe(2);
+          expect(updatedOrganizer2.rating_count).toBe(1);
+        }
+      }
+    });
+
+    it('should keep rating within valid bounds (1-5)', async () => {
+      const reviewer1Id = `reviewer1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const reviewer2Id = `reviewer2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId1 = `event1_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const eventId2 = `event2_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      const { data: review1 } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewer1Id,
+          event_id: eventId1,
+          rating: 1,
+          comment: 'Terrible',
+        })
+        .select('id')
+        .single();
+
+      const { data: review2 } = await adminClient
+        .from('organizer_reviews')
+        .insert({
+          organizer_id: organizer.id,
+          reviewer_id: reviewer2Id,
+          event_id: eventId2,
+          rating: 5,
+          comment: 'Excellent',
+        })
+        .select('id')
+        .single();
+
+      if (review1) testOrganizerReviews.push(review1 as unknown as TestOrganizerReview);
+      if (review2) testOrganizerReviews.push(review2 as unknown as TestOrganizerReview);
+
+      const { data: updatedOrganizer } = await adminClient
+        .from('event_organizers')
+        .select('rating_avg')
+        .eq('id', organizer.id)
+        .single();
+
+      expect(updatedOrganizer).not.toBeNull();
+      if (updatedOrganizer) {
+        expect(updatedOrganizer.rating_avg).toBeGreaterThanOrEqual(1);
+        expect(updatedOrganizer.rating_avg).toBeLessThanOrEqual(5);
+      }
+    });
+  });
+
+  describe('Edge Cases and Error Handling', () => {
+    it('should handle malformed JSON in current_location gracefully', async () => {
+      const { data: truckData, error: insertError } = await adminClient
+        .from('food_trucks')
+        .insert({
+          name: `Test Truck Bad JSON ${Date.now()}`,
+          current_location: null,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      expect(insertError).toBeNull();
+      expect(truckData).not.toBeNull();
+      if (truckData) {
+        testFoodTrucks.push(truckData as unknown as TestFoodTruck);
+
+        const { data: updatedData, error: updateError } = await adminClient
+          .from('food_trucks')
+          .update({
+            current_location: null,
+          })
+          .eq('id', truckData.id)
+          .select('id, location_geog')
+          .single();
+
+        expect(updateError).toBeNull();
+        expect(updatedData).not.toBeNull();
+        if (updatedData) {
+          expect(updatedData.location_geog).toBeNull();
+        }
+      }
+    });
+
+    it('should handle missing lat/lng fields in current_location', async () => {
+      const { data: truckData, error: insertError } = await adminClient
+        .from('food_trucks')
+        .insert({
+          name: `Test Truck No Lat ${Date.now()}`,
+          current_location: null,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      expect(insertError).toBeNull();
+      expect(truckData).not.toBeNull();
+      if (truckData) {
+        testFoodTrucks.push(truckData as unknown as TestFoodTruck);
+
+        const { data: updatedData, error: updateError } = await adminClient
+          .from('food_trucks')
+          .update({
+            current_location: { address: '123 Main St' },
+          })
+          .eq('id', truckData.id)
+          .select('id, location_geog')
+          .single();
+
+        expect(updateError).toBeNull();
+        expect(updatedData).not.toBeNull();
+        if (updatedData) {
+          expect(updatedData.location_geog).toBeNull();
+        }
+      }
+    });
+
+    it('should handle extreme coordinate values', async () => {
+      const { data: truckData, error: insertError } = await adminClient
+        .from('food_trucks')
+        .insert({
+          name: `Test Truck Extreme ${Date.now()}`,
+          current_location: null,
+          is_active: true,
+        })
+        .select('id')
+        .single();
+
+      expect(insertError).toBeNull();
+      expect(truckData).not.toBeNull();
+      if (truckData) {
+        testFoodTrucks.push(truckData as unknown as TestFoodTruck);
+
+        const { data: updatedData, error: updateError } = await adminClient
+          .from('food_trucks')
+          .update({
+            current_location: { lat: 89.999, lng: 179.999 },
+          })
+          .eq('id', truckData.id)
+          .select('id, location_geog')
+          .single();
+
+        expect(updateError).toBeNull();
+        expect(updatedData).not.toBeNull();
+        if (updatedData) {
+          expect(updatedData.location_geog).not.toBeNull();
+          expect(typeof updatedData.location_geog).toBe('string');
+        }
+      }
+    });
+  });
+});

@@ -1,0 +1,641 @@
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from '@jest/globals';
+
+describe('Analytics Events RLS Security Tests', () => {
+  let adminClient: SupabaseClient;
+  let anonClient: SupabaseClient;
+  let testTruckId: string | null = null;
+  let testEventData: any[] = [];
+
+  const VALID_EVENT_TYPES = [
+    'view',
+    'click_menu',
+    'click_directions',
+    'favorite',
+    'share',
+    'call',
+    'website',
+  ] as const;
+
+  beforeAll(async () => {
+    const { NEXT_PUBLIC_SUPABASE_URL: supabaseUrl } = process.env;
+    const { SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey } = process.env;
+    const { NEXT_PUBLIC_SUPABASE_ANON_KEY: anonKey } = process.env;
+
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+      console.warn('Missing required environment variables for database connection');
+      return;
+    }
+
+    adminClient = createClient(supabaseUrl, serviceRoleKey);
+    anonClient = createClient(supabaseUrl, anonKey);
+
+    await setupTestData();
+  });
+
+  afterAll(async () => {
+    await cleanupTestData();
+  });
+
+  beforeEach(() => {
+    testEventData = [];
+  });
+
+  afterEach(async () => {
+    for (const event of testEventData) {
+      if (event.id && adminClient) {
+        try {
+          await adminClient.from('analytics_events').delete().eq('id', event.id);
+        } catch (error) {
+          console.warn('Failed to cleanup test event:', error);
+        }
+      }
+    }
+  });
+
+  const setupTestData = async () => {
+    if (!adminClient) return;
+
+    const truckData = {
+      name: `Test Truck Analytics ${Date.now()}`,
+      description: 'Test truck for analytics RLS testing',
+      cuisine_type: ['test'],
+      contact_info: {},
+      operating_hours: {},
+      menu: [],
+      social_media: {},
+      is_active: true,
+    };
+
+    const truckResult = await adminClient
+      .from('food_trucks')
+      .insert(truckData)
+      .select('id')
+      .maybeSingle();
+
+    if (truckResult.error) {
+      console.error('Failed to create test truck:', truckResult.error.message);
+      return;
+    }
+
+    if (!truckResult.data) {
+      console.error('Failed to create test truck: no data returned');
+      return;
+    }
+
+    testTruckId = truckResult.data.id;
+  };
+
+  const cleanupTestData = async () => {
+    if (testTruckId && adminClient) {
+      try {
+        await adminClient.from('food_trucks').delete().eq('id', testTruckId);
+      } catch (error) {
+        console.warn('Failed to cleanup test truck:', error);
+      }
+    }
+  };
+
+  describe('Public INSERT Access (by design)', () => {
+    it('anon user can insert view event', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const eventData = {
+        truck_id: testTruckId,
+        event_type: 'view',
+        metadata: { source: 'test' },
+      };
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert(eventData)
+        .select('id, truck_id, event_type, user_id, metadata')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.id).toBeDefined();
+      expect(data?.truck_id).toBe(testTruckId);
+      expect(data?.event_type).toBe('view');
+      expect(data?.user_id).toBeNull();
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('anon user can insert click_menu event', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const eventData = {
+        truck_id: testTruckId,
+        event_type: 'click_menu',
+      };
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert(eventData)
+        .select('id, event_type')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.event_type).toBe('click_menu');
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('anon user can insert favorite event', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const eventData = {
+        truck_id: testTruckId,
+        event_type: 'favorite',
+        metadata: { user_action: 'added' },
+      };
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert(eventData)
+        .select('id, event_type')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.event_type).toBe('favorite');
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('anon user can insert custom metadata', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const customMetadata = {
+        referrer: 'https://example.com',
+        screen_resolution: '1920x1080',
+        session_id: `session_${Date.now()}`,
+      };
+
+      const eventData = {
+        truck_id: testTruckId,
+        event_type: 'view',
+        metadata: customMetadata,
+      };
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert(eventData)
+        .select('id, metadata')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.metadata).toEqual(customMetadata);
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+  });
+
+  describe('Event Type Validation', () => {
+    it('rejects missing event_type', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).not.toBeNull();
+    });
+
+    it('rejects invalid event_type', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+          event_type: 'invalid_event_type',
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).not.toBeNull();
+    });
+
+    it('rejects missing truck_id', async () => {
+      if (!anonClient) {
+        console.warn('Skipping test: anon client not available');
+        return;
+      }
+
+      const { error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          event_type: 'view',
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).not.toBeNull();
+    });
+
+    it('rejects invalid truck_id (not UUID)', async () => {
+      if (!anonClient) {
+        console.warn('Skipping test: anon client not available');
+        return;
+      }
+
+      const { error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: 'not-a-uuid',
+          event_type: 'view',
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).not.toBeNull();
+    });
+
+    it('accepts all valid event types', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      for (const eventType of VALID_EVENT_TYPES) {
+        const { data, error } = await anonClient
+          .from('analytics_events')
+          .insert({
+            truck_id: testTruckId,
+            event_type: eventType,
+          })
+          .select('id, event_type')
+          .maybeSingle();
+
+        expect(error).toBeNull();
+        expect(data?.event_type).toBe(eventType);
+
+        if (data?.id) {
+          testEventData.push(data);
+        }
+      }
+    });
+
+    it('accepts optional metadata', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const eventDataWithMetadata = {
+        truck_id: testTruckId,
+        event_type: 'view',
+        metadata: {
+          source: 'organic',
+          device: 'mobile',
+          session_id: `test_${Date.now()}`,
+        },
+      };
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert(eventDataWithMetadata)
+        .select('id, metadata')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.metadata).toEqual(eventDataWithMetadata.metadata);
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('defaults metadata to empty object if not provided', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+          event_type: 'view',
+        })
+        .select('id, metadata')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.metadata).toEqual({});
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('accepts null user_id (anonymous events)', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+          event_type: 'view',
+          user_id: null,
+        })
+        .select('id, user_id')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.user_id).toBeNull();
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('sets created_at timestamp automatically', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const beforeInsert = new Date();
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+          event_type: 'view',
+        })
+        .select('id, created_at')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(data?.created_at).toBeDefined();
+
+      const createdDate = new Date(data?.created_at || '');
+      expect(createdDate.getTime()).toBeGreaterThanOrEqual(beforeInsert.getTime());
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+
+    it('generates UUID id automatically', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+          event_type: 'view',
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+      expect(typeof data?.id).toBe('string');
+      expect(data?.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+      if (data?.id) {
+        testEventData.push(data);
+      }
+    });
+  });
+
+  describe('SELECT Restrictions (RLS security)', () => {
+    it('anon user SELECT returns empty array (security design)', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBeTruthy();
+
+      if (Array.isArray(data) && data.length > 0) {
+        for (const event of data) {
+          expect(typeof event.id).toBe('string');
+          expect(typeof event.truck_id).toBe('string');
+          expect(typeof event.event_type).toBe('string');
+        }
+      }
+    });
+
+    it('admin client can bypass RLS and see all events', async () => {
+      if (!testTruckId || !anonClient || !adminClient) {
+        console.warn('Skipping test: clients not available');
+        return;
+      }
+
+      await anonClient.from('analytics_events').insert({
+        truck_id: testTruckId,
+        event_type: 'view',
+      });
+
+      const { data, error } = await adminClient
+        .from('analytics_events')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBeTruthy();
+
+      if (Array.isArray(data) && data.length > 0) {
+        for (const event of data) {
+          testEventData.push(event);
+        }
+      }
+    });
+  });
+
+  describe('Multiple Event Tracking', () => {
+    it('tracks multiple different event types for same truck', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const eventTypes = ['view', 'click_menu', 'favorite', 'share'];
+      const insertedEvents: any[] = [];
+
+      for (const eventType of eventTypes) {
+        const { data, error } = await anonClient
+          .from('analytics_events')
+          .insert({
+            truck_id: testTruckId,
+            event_type: eventType,
+          })
+          .select('id, event_type')
+          .maybeSingle();
+
+        expect(error).toBeNull();
+        expect(data?.event_type).toBe(eventType);
+
+        if (data) {
+          insertedEvents.push(data);
+          testEventData.push(data);
+        }
+      }
+
+      const uniqueEventTypes = new Set(insertedEvents.map((e) => e.event_type));
+      expect(uniqueEventTypes.size).toBe(eventTypes.length);
+    });
+
+    it('multiple events for same truck are tracked separately', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const eventTypes = ['view', 'click_menu', 'favorite'];
+      const insertedIds: string[] = [];
+
+      for (const eventType of eventTypes) {
+        const { data, error } = await anonClient
+          .from('analytics_events')
+          .insert({
+            truck_id: testTruckId,
+            event_type: eventType,
+          })
+          .select('id')
+          .maybeSingle();
+
+        expect(error).toBeNull();
+        expect(typeof data?.id).toBe('string');
+
+        if (data?.id) {
+          insertedIds.push(data.id);
+          testEventData.push(data);
+        }
+      }
+
+      expect(new Set(insertedIds).size).toBe(insertedIds.length);
+    });
+  });
+
+  describe('Foreign Key Constraints', () => {
+    it('rejects event for non-existent truck', async () => {
+      if (!anonClient) {
+        console.warn('Skipping test: anon client not available');
+        return;
+      }
+
+      const fakeTruckId = '00000000-0000-0000-0000-000000000000';
+
+      const { error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: fakeTruckId,
+          event_type: 'view',
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).not.toBeNull();
+    });
+  });
+
+  describe('Security Design Verification', () => {
+    it('public INSERT policy does NOT expose other events (security by design)', async () => {
+      if (!testTruckId || !anonClient) {
+        console.warn('Skipping test: test truck not available');
+        return;
+      }
+
+      const { data, error } = await anonClient
+        .from('analytics_events')
+        .insert({
+          truck_id: testTruckId,
+          event_type: 'view',
+        })
+        .select('id')
+        .maybeSingle();
+
+      expect(error).toBeNull();
+
+      if (!data?.id) return;
+
+      const { data: selectData } = await anonClient
+        .from('analytics_events')
+        .select('*')
+        .eq('truck_id', testTruckId);
+
+      expect(Array.isArray(selectData)).toBeTruthy();
+
+      if (Array.isArray(selectData)) {
+        const foundEvent = selectData.find((e) => e.id === data.id);
+        if (foundEvent) {
+          testEventData.push(foundEvent);
+        }
+      }
+    });
+
+    it('admin client has full access (bypasses RLS)', async () => {
+      if (!testTruckId || !anonClient || !adminClient) {
+        console.warn('Skipping test: clients not available');
+        return;
+      }
+
+      await anonClient.from('analytics_events').insert({
+        truck_id: testTruckId,
+        event_type: 'view',
+      });
+
+      const { data, error } = await adminClient
+        .from('analytics_events')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+
+      expect(error).toBeNull();
+      expect(Array.isArray(data)).toBeTruthy();
+
+      if (Array.isArray(data) && data.length > 0) {
+        for (const event of data) {
+          testEventData.push(event);
+        }
+      }
+    });
+  });
+});

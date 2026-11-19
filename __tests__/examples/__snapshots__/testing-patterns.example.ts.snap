@@ -1,0 +1,5 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Snapshot Test Example should format product correctly 1`] = `"Test Product - $29.99 (Electronics)"`;
+
+exports[`Snapshot Test Example should format product with special characters correctly 1`] = `"Product with "quotes" & symbols - $15.50 (Special Items)"`;

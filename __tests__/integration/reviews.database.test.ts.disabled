@@ -1,0 +1,377 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { DatabaseTestSetup } from './database.test.setup';
+
+describe('Reviews Database Integration Tests', () => {
+  const supabase = getSupabaseAdmin();
+  let testUserId: string;
+  let testTruckId: string;
+  let reviewId: string;
+
+  beforeAll(async () => {
+    await DatabaseTestSetup.cleanupTestData();
+    
+    // Create a test user and food truck for reviews testing
+    const testUser = await DatabaseTestSetup.createTestUser();
+    testUserId = testUser.id;
+    
+    const testTruck = await DatabaseTestSetup.createTestFoodTruck();
+    testTruckId = testTruck.id;
+  });
+
+  afterAll(async () => {
+    await DatabaseTestSetup.cleanupTestData();
+  });
+
+  describe('CREATE operations', () => {
+    test('should create a new review', async () => {
+      const reviewData = {
+        truck_id: testTruckId,
+        user_id: testUserId,
+        rating: 5,
+        comment: 'Excellent food and service!'
+      };
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .insert([reviewData])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.user_id).toBe(testUserId);
+      expect(data.rating).toBe(5);
+      expect(data.comment).toBe('Excellent food and service!');
+
+      reviewId = data.id;
+    });
+
+    test('should validate rating constraints (1-5)', async () => {
+      const invalidReview = {
+        truck_id: testTruckId,
+        user_id: testUserId,
+        rating: 7, // Invalid rating
+        comment: 'Invalid rating test'
+      };
+
+      const { error } = await supabase
+        .from('reviews')
+        .insert([invalidReview]);
+
+      expect(error).toBeDefined();
+      expect(error?.message).toContain('rating');
+    });
+
+    test('should create review with minimum rating', async () => {
+      const reviewData = {
+        truck_id: testTruckId,
+        user_id: testUserId,
+        rating: 1,
+        comment: 'Could be better'
+      };
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .insert([reviewData])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.rating).toBe(1);
+    });
+
+    test('should create review with maximum rating', async () => {
+      const reviewData = {
+        truck_id: testTruckId,
+        user_id: testUserId,
+        rating: 5,
+        comment: 'Outstanding!'
+      };
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .insert([reviewData])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.rating).toBe(5);
+    });
+  });
+
+  describe('READ operations', () => {
+    test('should retrieve all reviews for a specific truck', async () => {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('truck_id', testTruckId);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBeTruthy();
+      expect(data.length).toBeGreaterThanOrEqual(3); // At least 3 from previous tests
+      
+      // Verify all reviews are for the correct truck
+      data.forEach(review => {
+        expect(review.truck_id).toBe(testTruckId);
+      });
+    });
+
+    test('should retrieve all reviews by a specific user', async () => {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('user_id', testUserId);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBeTruthy();
+      expect(data.length).toBeGreaterThanOrEqual(3); // At least 3 from previous tests
+      
+      // Verify all reviews are by the correct user
+      data.forEach(review => {
+        expect(review.user_id).toBe(testUserId);
+      });
+    });
+
+    test('should retrieve a specific review by ID', async () => {
+      if (!reviewId) {
+        throw new Error('reviewId not set - CREATE test must run first');
+      }
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('id', reviewId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(reviewId);
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.user_id).toBe(testUserId);
+    });
+
+    test('should filter reviews by rating range', async () => {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .gte('rating', 4)
+        .eq('truck_id', testTruckId);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBeTruthy();
+      
+      data.forEach(review => {
+        expect(review.rating).toBeGreaterThanOrEqual(4);
+        expect(review.truck_id).toBe(testTruckId);
+      });
+    });
+
+    test('should order reviews by creation date', async () => {
+      const { data: ascendingReviews, error: ascError } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .order('created_at', { ascending: true });
+
+      expect(ascError).toBeNull();
+      expect(ascendingReviews).toBeDefined();
+      expect(Array.isArray(ascendingReviews)).toBeTruthy();
+      
+      if (ascendingReviews.length > 1) {
+        for (let i = 1; i < ascendingReviews.length; i++) {
+          expect(new Date(ascendingReviews[i-1].created_at) <= new Date(ascendingReviews[i].created_at)).toBeTruthy();
+        }
+      }
+
+      const { data: descendingReviews, error: descError } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('truck_id', testTruckId)
+        .order('created_at', { ascending: false });
+
+      expect(descError).toBeNull();
+      expect(descendingReviews).toBeDefined();
+      expect(Array.isArray(descendingReviews)).toBeTruthy();
+      
+      if (descendingReviews.length > 1) {
+        for (let i = 1; i < descendingReviews.length; i++) {
+          expect(new Date(descendingReviews[i-1].created_at) >= new Date(descendingReviews[i].created_at)).toBeTruthy();
+        }
+      }
+    });
+  });
+
+  describe('UPDATE operations', () => {
+    test('should update a review', async () => {
+      if (!reviewId) {
+        throw new Error('reviewId not set - CREATE test must run first');
+      }
+
+      const updatedData = {
+        rating: 4,
+        comment: 'Good but could be better'
+      };
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .update(updatedData)
+        .eq('id', reviewId)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(reviewId);
+      expect(data.rating).toBe(4);
+      expect(data.comment).toBe('Good but could be better');
+    });
+
+    test('should validate rating constraints during update', async () => {
+      if (!reviewId) {
+        throw new Error('reviewId not set - CREATE test must run first');
+      }
+
+      const invalidUpdate = { rating: 10 }; // Invalid rating
+
+      const { error } = await supabase
+        .from('reviews')
+        .update(invalidUpdate)
+        .eq('id', reviewId);
+
+      expect(error).toBeDefined();
+      expect(error?.message).toContain('rating');
+    });
+  });
+
+  describe('DELETE operations', () => {
+    test('should delete a review', async () => {
+      // Create a new review to delete without interfering with other tests
+      const { data: newReview } = await supabase
+        .from('reviews')
+        .insert([{ 
+          truck_id: testTruckId, 
+          user_id: testUserId, 
+          rating: 3, 
+          comment: 'Test review to delete' 
+        }])
+        .select()
+        .single();
+      
+      const { error } = await supabase
+        .from('reviews')
+        .delete()
+        .eq('id', newReview.id);
+
+      expect(error).toBeNull();
+
+      // Verify it was deleted
+      const { data, error: fetchError } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('id', newReview.id)
+        .single();
+
+      expect(fetchError).toBeDefined();
+      expect(data).toBeUndefined();
+    });
+
+    test('should handle deletion of non-existent review gracefully', async () => {
+      const nonExistentId = DatabaseTestSetup.generateTestId('review');
+
+      const { error } = await supabase
+        .from('reviews')
+        .delete()
+        .eq('id', nonExistentId);
+
+      // No error is expected - DELETE operations are idempotent
+      expect(error).toBeNull();
+    });
+  });
+
+  describe('Data integrity and relationships', () => {
+    test('should prevent creating reviews for non-existent truck', async () => {
+      const invalidReview = {
+        truck_id: DatabaseTestSetup.generateTestId('truck'),
+        user_id: testUserId,
+        rating: 5,
+        comment: 'Test review'
+      };
+
+      const { error } = await supabase
+        .from('reviews')
+        .insert([invalidReview]);
+
+      expect(error).toBeDefined();
+      // Should fail due to foreign key constraint
+      expect(error?.message).toContain('foreign key constraint');
+    });
+
+    test('should handle reviews for trucks without user (nullable user)', async () => {
+      // Create a review without a user_id (simulating an anonymous review)
+      const reviewData = {
+        truck_id: testTruckId,
+        user_id: null,  // Allow null user_id
+        rating: 4,
+        comment: 'Anonymous review'
+      };
+
+      const { data, error } = await supabase
+        .from('reviews')
+        .insert([reviewData])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.user_id).toBeNull();
+    });
+  });
+
+  describe('Performance and indexing', () => {
+    test('should efficiently query by truck_id index', async () => {
+      const startTime = Date.now();
+      const { error } = await supabase
+        .from('reviews')
+        .select('id, truck_id, user_id, rating')
+        .eq('truck_id', testTruckId)
+        .limit(10);
+      const queryTime = Date.now() - startTime;
+      
+      expect(error).toBeNull();
+      expect(queryTime).toBeLessThan(1000); // Should complete in under 1 second
+    });
+
+    test('should efficiently query by user_id index', async () => {
+      const startTime = Date.now();
+      const { error } = await supabase
+        .from('reviews')
+        .select('id, truck_id, user_id, rating')
+        .eq('user_id', testUserId)
+        .limit(10);
+      const queryTime = Date.now() - startTime;
+      
+      expect(error).toBeNull();
+      expect(queryTime).toBeLessThan(1000); // Should complete in under 1 second
+    });
+
+    test('should efficiently query by rating index', async () => {
+      const startTime = Date.now();
+      const { error } = await supabase
+        .from('reviews')
+        .select('id, truck_id, user_id, rating')
+        .eq('rating', 5)
+        .limit(10);
+      const queryTime = Date.now() - startTime;
+      
+      expect(error).toBeNull();
+      expect(queryTime).toBeLessThan(1000); // Should complete in under 1 second
+    });
+  });
+});

@@ -1,0 +1,482 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { v4 as uuidv4 } from 'uuid';
+
+describe('Events Database Integration', () => {
+  const supabase = getSupabaseAdmin();
+  let testTruckId: string;
+  let testEventId: string;
+
+  beforeAll(async () => {
+    // Create a test food truck
+    const { data: truckData, error: truckError } = await supabase
+      .from('food_trucks')
+      .insert({
+        name: 'Event Test Truck',
+        description: 'A test truck for event testing',
+        cuisine_type: ['Test'],
+        owner_id: 'event-test-owner-id',
+      })
+      .select()
+      .single();
+
+    if (truckError) {
+      throw new Error(`Failed to create test truck: ${truckError.message}`);
+    }
+
+    testTruckId = truckData.id;
+  });
+
+  afterAll(async () => {
+    // Clean up test data
+    await supabase
+      .from('events')
+      .delete()
+      .eq('truck_id', testTruckId);
+
+    await supabase
+      .from('food_trucks')
+      .delete()
+      .eq('id', testTruckId);
+  });
+
+  describe('CRUD Operations', () => {
+    it('should create a new event', async () => {
+      const eventData = {
+        truck_id: testTruckId,
+        title: 'Test Event',
+        description: 'A test event for integration testing',
+        start_time: new Date(Date.now() + 86400000).toISOString(), // Tomorrow
+        end_time: new Date(Date.now() + 172800000).toISOString(), // Day after tomorrow
+        location: {
+          type: 'Point',
+          coordinates: [-98.5795, 39.8283], // Center of US
+        },
+        address: '123 Test Street, Charleston, SC 29401',
+        timezone: 'America/New_York',
+        is_recurring: false,
+        recurrence_pattern: null,
+      };
+
+      const { data, error } = await supabase
+        .from('events')
+        .insert(eventData)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.title).toBe(eventData.title);
+      expect(data.description).toBe(eventData.description);
+      expect(data.address).toBe(eventData.address);
+      expect(data.timezone).toBe(eventData.timezone);
+      expect(data.is_recurring).toBe(eventData.is_recurring);
+
+      testEventId = data.id;
+    });
+
+    it('should read an event', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('id', testEventId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testEventId);
+      expect(data.truck_id).toBe(testTruckId);
+      expect(data.title).toBe('Test Event');
+      expect(data.description).toBe('A test event for integration testing');
+    });
+
+    it('should update an event', async () => {
+      const updateData = {
+        title: 'Updated Test Event',
+        description: 'An updated test event',
+        address: '456 Updated Street, Charleston, SC 29401',
+      };
+
+      const { data, error } = await supabase
+        .from('events')
+        .update(updateData)
+        .eq('id', testEventId)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.title).toBe(updateData.title);
+      expect(data.description).toBe(updateData.description);
+      expect(data.address).toBe(updateData.address);
+    });
+
+    it('should delete an event', async () => {
+      // Create an event to delete
+      const { data: newEvent, error: createError } = await supabase
+        .from('events')
+        .insert({
+          truck_id: testTruckId,
+          title: 'Event to Delete',
+          description: 'This event will be deleted',
+          start_time: new Date(Date.now() + 259200000).toISOString(), // 3 days from now
+          end_time: new Date(Date.now() + 345600000).toISOString(), // 4 days from now
+          location: {
+            type: 'Point',
+            coordinates: [-98.5795, 39.8283],
+          },
+          address: '789 Delete Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+          is_recurring: false,
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        throw new Error(`Failed to create event for deletion: ${createError.message}`);
+      }
+
+      const { error } = await supabase
+        .from('events')
+        .delete()
+        .eq('id', newEvent.id);
+
+      expect(error).toBeNull();
+
+      // Verify deletion
+      const { data, error: readError } = await supabase
+        .from('events')
+        .select('*')
+        .eq('id', newEvent.id)
+        .maybeSingle();
+
+      expect(readError).toBeNull();
+      expect(data).toBeNull();
+    });
+  });
+
+  describe('Data Validation', () => {
+    it('should enforce required fields', async () => {
+      const { error } = await supabase
+        .from('events')
+        .insert({
+          // Missing required truck_id
+          title: 'Test Event Without Truck',
+          description: 'An invalid event without truck_id',
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 172800000).toISOString(),
+          location: {
+            type: 'Point',
+            coordinates: [-98.5795, 39.8283],
+          },
+          address: '123 Test Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+        });
+
+      expect(error).toBeDefined();
+      expect(error?.message).toMatch(/null value in column "truck_id"/);
+    });
+
+    it('should validate time constraints', async () => {
+      const { error } = await supabase
+        .from('events')
+        .insert({
+          truck_id: testTruckId,
+          title: 'Time Invalid Event',
+          description: 'An event with invalid time constraints',
+          start_time: new Date(Date.now() + 172800000).toISOString(), // Day after tomorrow
+          end_time: new Date(Date.now() + 86400000).toISOString(), // Tomorrow (before start)
+          location: {
+            type: 'Point',
+            coordinates: [-98.5795, 39.8283],
+          },
+          address: '123 Test Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+        });
+
+      expect(error).toBeDefined();
+      expect(error?.message).toMatch(/end_time must be after start_time/);
+    });
+
+    it('should validate geographic coordinates', async () => {
+      const { error } = await supabase
+        .from('events')
+        .insert({
+          truck_id: testTruckId,
+          title: 'Coordinate Invalid Event',
+          description: 'An event with invalid geographic coordinates',
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 172800000).toISOString(),
+          location: {
+            type: 'Point',
+            coordinates: [200, 100], // Invalid coordinates
+          },
+          address: '123 Test Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+        });
+
+      // Depending on database constraints, this may or may not return an error
+      // But we can at least check that the coordinates are stored properly
+      expect(error).toBeNull(); // Assuming no database-level constraints
+    });
+  });
+
+  describe('Recurring Events', () => {
+    let recurringEventId: string;
+
+    it('should create a recurring event', async () => {
+      const eventData = {
+        truck_id: testTruckId,
+        title: 'Weekly Test Event',
+        description: 'A recurring test event',
+        start_time: new Date(Date.now() + 86400000).toISOString(),
+        end_time: new Date(Date.now() + 172800000).toISOString(),
+        location: {
+          type: 'Point',
+          coordinates: [-98.5795, 39.8283],
+        },
+        address: '123 Test Street, Charleston, SC 29401',
+        timezone: 'America/New_York',
+        is_recurring: true,
+        recurrence_pattern: {
+          frequency: 'weekly',
+          interval: 1,
+          days_of_week: ['monday', 'wednesday', 'friday'],
+          end_date: new Date(Date.now() + 2592000000).toISOString(), // 30 days from now
+        },
+      };
+
+      const { data, error } = await supabase
+        .from('events')
+        .insert(eventData)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.is_recurring).toBe(true);
+      expect(data.recurrence_pattern).toEqual(eventData.recurrence_pattern);
+
+      recurringEventId = data.id;
+    });
+
+    it('should handle recurrence pattern validation', async () => {
+      const { error } = await supabase
+        .from('events')
+        .insert({
+          truck_id: testTruckId,
+          title: 'Invalid Recurring Event',
+          description: 'A recurring event with invalid pattern',
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 172800000).toISOString(),
+          location: {
+            type: 'Point',
+            coordinates: [-98.5795, 39.8283],
+          },
+          address: '123 Test Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+          is_recurring: true,
+          recurrence_pattern: {
+            // Missing required frequency
+            interval: 1,
+            days_of_week: ['monday'],
+          },
+        });
+
+      // Depending on database constraints, this may or may not return an error
+      expect(error).toBeNull(); // Assuming no database-level constraints
+    });
+
+    afterAll(async () => {
+      // Clean up recurring event
+      if (recurringEventId) {
+        await supabase
+          .from('events')
+          .delete()
+          .eq('id', recurringEventId);
+      }
+    });
+  });
+
+  describe('Relationships', () => {
+    beforeAll(async () => {
+      // Create an event for relationship testing
+      const { data, error } = await supabase
+        .from('events')
+        .insert({
+          truck_id: testTruckId,
+          title: 'Relationship Test Event',
+          description: 'An event for relationship testing',
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          end_time: new Date(Date.now() + 172800000).toISOString(),
+          location: {
+            type: 'Point',
+            coordinates: [-98.5795, 39.8283],
+          },
+          address: '123 Relationship Street, Charleston, SC 29401',
+          timezone: 'America/New_York',
+          is_recurring: false,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to create event for relationship testing: ${error.message}`);
+      }
+
+      testEventId = data.id;
+    });
+
+    it('should fetch event with truck details', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select(`
+          *,
+          food_trucks (
+            name,
+            description
+          )
+        `)
+        .eq('id', testEventId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.food_trucks).toBeDefined();
+      expect(data.food_trucks.name).toBe('Event Test Truck');
+      expect(data.food_trucks.description).toBe('A test truck for event testing');
+    });
+
+    it('should fetch events by truck', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .eq('truck_id', testTruckId);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBe(true);
+      expect(data.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should fetch upcoming events', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true });
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBe(true);
+      
+      // All events should be in the future
+      for (const event of data) {
+        expect(new Date(event.start_time).getTime()).toBeGreaterThanOrEqual(new Date().getTime());
+      }
+    });
+  });
+
+  describe('Performance', () => {
+    beforeAll(async () => {
+      // Create multiple events for performance testing
+      const events = Array.from({ length: 50 }, (_, i) => ({
+        truck_id: testTruckId,
+        title: `Performance Test Event ${i}`,
+        description: `Performance test event #${i}`,
+        start_time: new Date(Date.now() + (i * 86400000)).toISOString(), // i days from now
+        end_time: new Date(Date.now() + (i * 86400000) + 3600000).toISOString(), // 1 hour duration
+        location: {
+          type: 'Point',
+          coordinates: [-98.5795, 39.8283],
+        },
+        address: `Performance Address ${i}, Charleston, SC 29401`,
+        timezone: 'America/New_York',
+        is_recurring: false,
+      }));
+
+      await supabase
+        .from('events')
+        .insert(events);
+    });
+
+    afterAll(async () => {
+      // Clean up bulk events
+      await supabase
+        .from('events')
+        .delete()
+        .neq('id', testEventId);
+    });
+
+    it('should efficiently query events by time range', async () => {
+      const startTime = Date.now();
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .gte('start_time', new Date(startTime).toISOString())
+        .lte('end_time', new Date(startTime + 864000000).toISOString()) // 10 days from now
+        .limit(10);
+
+      const endTime = Date.now();
+      const queryTime = endTime - startTime;
+
+      expect(error).toBeNull();
+      expect(data).toHaveLength(10);
+      expect(queryTime).toBeLessThan(1000); // Should complete in under 1 second
+    });
+
+    it('should efficiently query events by location', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('COUNT(*)')
+        .gte('start_time', new Date().toISOString());
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(parseInt(data[0].count)).toBeGreaterThanOrEqual(50);
+    });
+
+    it('should handle sorting events by start time', async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select('start_time')
+        .gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true })
+        .limit(20);
+
+      expect(error).toBeNull();
+      expect(data).toHaveLength(20);
+      
+      // Verify chronological order
+      for (let i = 0; i < data.length - 1; i++) {
+        expect(new Date(data[i].start_time).getTime()).toBeLessThanOrEqual(
+          new Date(data[i + 1].start_time).getTime()
+        );
+      }
+    });
+
+    it('should handle large result sets with pagination', async () => {
+      const pageSize = 20;
+      const totalPages = 3; // We expect at least 3 pages of results
+
+      for (let page = 0; page < totalPages; page++) {
+        const { data, error } = await supabase
+          .from('events')
+          .select('*')
+          .gte('start_time', new Date().toISOString())
+          .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        expect(error).toBeNull();
+        expect(data.length).toBeGreaterThan(0);
+        
+        if (data.length < pageSize) {
+          // Last page
+          break;
+        }
+      }
+    });
+  });
+});
+
+
+

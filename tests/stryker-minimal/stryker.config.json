@@ -1,0 +1,11 @@
+{
+  "testRunner": "jest",
+  "mutate": ["slug.ts"],
+  "reporters": ["json", "html", "progress"],
+  "htmlReporter": { "fileName": "/reports/stryker-report.html" },
+  "jsonReporter": { "fileName": "/reports/stryker-report.json" },
+  "thresholds": { "high": 80, "low": 60 },
+  "concurrency": 2,
+  "timeoutMS": 5000,
+  "disableTypeChecks": true
+}

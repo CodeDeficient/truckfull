@@ -1,0 +1,58 @@
+{
+  "extends": "@tsconfig/next/tsconfig.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "webworker", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "baseUrl": ".",
+    "allowImportingTsExtensions": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "types": ["jest", "node"],
+    "paths": {
+      "@/*": ["./*"],
+      "@/lib/supabase": ["lib/supabase/index.ts"]
+    },
+    "downlevelIteration": true,
+    "target": "es2017"
+  },
+  "include": [
+    "next-env.d.ts",
+    "paths.d.ts",
+    "proxy.ts",
+    "middleware.api.ts",
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "hooks/**/*.ts",
+    "hooks/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "types/**/*.ts",
+    "scrapers/**/*.ts",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "scripts",
+    "jest.config.cjs",
+    ".next",
+    ".dependency-cruiser.cjs",
+    "__tests__",
+    "tests",
+    "**/*.test.*"
+  ]
+}

@@ -1,0 +1,365 @@
+/**
+ * Unit Tests for JSON Extractor
+ * Tests safe JSON extraction with DoS protection
+ */
+
+import { describe, it, expect } from '@jest/globals';
+import { extractJsonSafely, stripMarkdownBlocks } from '../jsonExtractor';
+
+describe('extractJsonSafely', () => {
+  describe('Valid JSON inputs', () => {
+    it('should parse plain JSON object', () => {
+      const input = '{"key": "value"}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should parse JSON array', () => {
+      const input = '[{"key": "value"}, {"key2": "value2"}]';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual([{ key: 'value' }, { key2: 'value2' }]);
+    });
+
+    it('should handle nested objects', () => {
+      const input = '{"outer": {"inner": {"deep": "value"}}}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual({ outer: { inner: { deep: 'value' } } });
+    });
+
+    it('should handle arrays in objects', () => {
+      const input = '{"items": [1, 2, 3]}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual({ items: [1, 2, 3] });
+    });
+
+    it('should handle string escaping', () => {
+      const input = '{"text": "Hello \\"world\\""}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual({ text: 'Hello "world"' });
+    });
+
+    it('should handle numbers, booleans, and null', () => {
+      const input = '{"num": 42.5, "bool": true, "null": null}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual({ num: 42.5, bool: true, null: null });
+    });
+  });
+
+  describe('JSON with prefix/suffix text', () => {
+    it('should extract JSON from text with prefix', () => {
+      const input = 'Some text {"key": "value"}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should extract JSON from text with suffix', () => {
+      const input = '{"key": "value"} more text';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should extract JSON from text with prefix and suffix', () => {
+      const input = 'Start {"key": "value"} end';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should handle multiple JSON objects (extract first)', () => {
+      const input = '{"first": 1} {"second": 2}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"first": 1}');
+      expect(JSON.parse(result!)).toEqual({ first: 1 });
+    });
+  });
+
+  describe('Markdown code blocks', () => {
+    it('should extract JSON from ```json block', () => {
+      const input = '```json\n{"key": "value"}\n```';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should extract JSON from ```javascript block', () => {
+      const input = '```javascript\n{"key": "value"}\n```';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should extract JSON from plain ``` block', () => {
+      const input = '```\n{"key": "value"}\n```';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+
+    it('should handle markdown with extra text', () => {
+      const input = 'Here is the result:\n```json\n{"key": "value"}\n```\nDone!';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"key": "value"}');
+      expect(JSON.parse(result!)).toEqual({ key: 'value' });
+    });
+  });
+
+  describe('Invalid inputs', () => {
+    it('should return null for empty string', () => {
+      const result = extractJsonSafely('');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for whitespace only', () => {
+      const result = extractJsonSafely('   \n\t  ');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for non-JSON text', () => {
+      const result = extractJsonSafely('not json at all');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for malformed JSON', () => {
+      const result = extractJsonSafely('{"key": "value"');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for null input', () => {
+      const result = extractJsonSafely(null as unknown as string);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for undefined input', () => {
+      const result = extractJsonSafely(undefined as unknown as string);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for non-string input', () => {
+      const result = extractJsonSafely(123 as unknown as string);
+      expect(result).toBeNull();
+    });
+
+    it('should return null for unbalanced braces (only opening)', () => {
+      const result = extractJsonSafely('{{{{');
+      expect(result).toBeNull();
+    });
+
+    it('should return null for unbalanced braces (only closing)', () => {
+      const result = extractJsonSafely('}}}}');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('DoS Protection - Critical Security Tests', () => {
+    it('should handle large valid JSON without hanging', () => {
+      const largeObject = {
+        data: Array.from({ length: 500 }, (_, i) => ({ id: i, value: `item${i}` })),
+      };
+      const input = JSON.stringify(largeObject);
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(100);
+      expect(result).not.toBeNull();
+      expect(JSON.parse(result!)).toEqual(largeObject);
+    });
+
+    it('should handle input with many repeated characters without hanging', () => {
+      const input = '{"' + 'a'.repeat(5000) + '": "value"}';
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed['a'.repeat(5000)]).toBe('value');
+    });
+
+    it('should handle unbalanced braces with many chars without hanging', () => {
+      const input = '{{{{' + 'a'.repeat(10000) + '}}}}';
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).toBeNull();
+    });
+
+    it('should handle malformed JSON without exponential backtracking', () => {
+      const input = '{"key": "value' + 'a'.repeat(1000) + '"}';
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).toBeNull();
+    });
+
+    it('should handle very long values without hanging', () => {
+      const veryLongText = 'a'.repeat(20000);
+      const input = '{"key": "' + veryLongText + '"}';
+
+      const result = extractJsonSafely(input);
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.key).toBe(veryLongText);
+    });
+
+    it('should handle deeply nested valid JSON without hanging', () => {
+      const nested = { level1: { level2: { level3: { level4: { level5: 'value' } } } } };
+      const input = JSON.stringify(nested);
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).not.toBeNull();
+      expect(JSON.parse(result!)).toEqual(nested);
+    });
+
+    it('should handle unbalanced braces with many chars without hanging', () => {
+      const input = '{{{{' + 'a'.repeat(10000) + '}}}}';
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).toBeNull();
+    });
+
+    it('should handle deeply nested braces without hanging', () => {
+      const input = '{'.repeat(100) + '"key": "value"' + '}'.repeat(100);
+
+      const start = Date.now();
+      const result = extractJsonSafely(input);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).not.toBeNull();
+    });
+
+    it('should handle very long values without hanging', () => {
+      const veryLongText = 'a'.repeat(20000);
+      const input = '{"key": "' + veryLongText + '"}';
+
+      const result = extractJsonSafely(input);
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.key).toBe(veryLongText);
+    });
+
+    it('should handle mixed braces and characters without exponential backtracking', () => {
+      const pattern = '{"' + 'a'.repeat(1000) + '"}';
+      const start = Date.now();
+      const result = extractJsonSafely(pattern);
+      const elapsed = Date.now() - start;
+
+      expect(elapsed).toBeLessThan(50);
+      expect(result).not.toBeNull();
+    });
+  });
+
+  describe('Edge cases', () => {
+    it('should handle empty object', () => {
+      const input = '{}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{}');
+      expect(JSON.parse(result!)).toEqual({});
+    });
+
+    it('should handle empty array', () => {
+      const input = '[]';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('[]');
+      expect(JSON.parse(result!)).toEqual([]);
+    });
+
+    it('should handle Unicode characters', () => {
+      const input = '{"emoji": "😀", "chinese": "你好", "arabic": "مرحبا"}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual({ emoji: '😀', chinese: '你好', arabic: 'مرحبا' });
+    });
+
+    it('should handle newlines and tabs', () => {
+      const input = '{\n  "key": "value",\n  "key2": "value2"\n}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe(input);
+      expect(JSON.parse(result!)).toEqual({ key: 'value', key2: 'value2' });
+    });
+
+    it('should extract from text with JSON-like but non-JSON content', () => {
+      const input = 'text { not json } text {"valid": "json"}';
+      const result = extractJsonSafely(input);
+      expect(result).toBe('{"valid": "json"}');
+      expect(JSON.parse(result!)).toEqual({ valid: 'json' });
+    });
+  });
+});
+
+describe('stripMarkdownBlocks', () => {
+  it('should remove ```json marker', () => {
+    const input = '```json\n{"key": "value"}\n```';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toBe('{"key": "value"}');
+  });
+
+  it('should remove ```javascript marker', () => {
+    const input = '```javascript\n{"key": "value"}\n```';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toContain('{"key": "value"}');
+    expect(result).not.toContain('```javascript');
+    expect(result).not.toContain('```');
+  });
+
+  it('should remove plain ``` marker', () => {
+    const input = '```\n{"key": "value"}\n```';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toBe('{"key": "value"}');
+  });
+
+  it('should handle text before and after blocks', () => {
+    const input = 'Result:\n```json\n{"key": "value"}\n```\nDone!';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toBe('Result:\n{"key": "value"}\nDone!');
+  });
+
+  it('should handle multiple code blocks', () => {
+    const input = '```json\n{"key": "value"}\n```\nText\n```json\n{"key2": "value2"}\n```';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toBe('{"key": "value"}\nText\n{"key2": "value2"}');
+  });
+
+  it('should not modify text without markdown', () => {
+    const input = '{"key": "value"}';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toBe('{"key": "value"}');
+  });
+
+  it('should handle empty string', () => {
+    const result = stripMarkdownBlocks('');
+    expect(result).toBe('');
+  });
+
+  it('should trim whitespace', () => {
+    const input = '  ```json\n{"key": "value"}\n```  ';
+    const result = stripMarkdownBlocks(input);
+    expect(result).toBe('{"key": "value"}');
+  });
+});

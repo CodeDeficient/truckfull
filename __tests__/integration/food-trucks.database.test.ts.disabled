@@ -1,0 +1,314 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { DatabaseTestSetup } from './database.test.setup';
+
+describe('Food Truck Database Integration Tests', () => {
+  const supabase = getSupabaseAdmin();
+  let testUserId: string;
+  let testTruckId: string;
+
+  beforeAll(async () => {
+    await DatabaseTestSetup.cleanupTestData();
+  });
+
+  afterAll(async () => {
+    await DatabaseTestSetup.cleanupTestData();
+  });
+
+  describe('CREATE operations', () => {
+    test('should create a new food truck', async () => {
+      const truckData = {
+        name: `Test Truck ${Date.now()}`,
+        description: 'A new test food truck',
+        cuisine_type: ['asian', 'fusion'],
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4194, 37.7749]
+        },
+        contact_info: {
+          phone: '+1-555-123-4567',
+          email: `truck-${Date.now()}@example.com`
+        },
+        operating_hours: {
+          Monday: { open: '11:00', close: '21:00' },
+          Tuesday: { open: '11:00', close: '21:00' }
+        },
+        menu_items: [],
+        social_media: {},
+        owner_id: DatabaseTestSetup.generateTestId('user')
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([truckData])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.name).toBe(truckData.name);
+      expect(data.description).toBe(truckData.description);
+      expect(data.cuisine_type).toEqual(truckData.cuisine_type);
+      expect(data.current_location).toEqual(truckData.current_location);
+      expect(data.contact_info).toEqual(truckData.contact_info);
+      expect(data.operating_hours).toEqual(truckData.operating_hours);
+
+      testTruckId = data.id;
+    });
+
+    test('should create a food truck with validation constraints', async () => {
+      const truckData = {
+        name: `Validated Truck ${Date.now()}`,
+        description: 'A test truck with validation',
+        cuisine_type: ['mexican', 'tacos'],
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4195, 37.7750]
+        },
+        contact_info: {
+          phone: '+1-555-987-6543',
+          email: `validate-${Date.now()}@example.com`
+        },
+        operating_hours: {
+          Wednesday: { open: '12:00', close: '22:00' },
+          Thursday: { open: '12:00', close: '22:00' }
+        },
+        menu_items: [],
+        social_media: {},
+        verification_status: 'pending'
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([truckData])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.name).toBe(truckData.name);
+      expect(data.verification_status).toBe('pending');
+      expect(data.data_quality_score).toBeGreaterThanOrEqual(0);
+      expect(data.data_quality_score).toBeLessThanOrEqual(1);
+    });
+  });
+
+  describe('READ operations', () => {
+    test('should retrieve all food trucks', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*');
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBeTruthy();
+    });
+
+    test('should retrieve a specific food truck by ID', async () => {
+      if (!testTruckId) {
+        throw new Error('testTruckId not set - CREATE test must run first');
+      }
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .eq('id', testTruckId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+    });
+
+    test('should filter food trucks by cuisine type', async () => {
+      const cuisineFilter = ['asian', 'fusion'];
+      
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .overlaps('cuisine_type', cuisineFilter);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBeTruthy();
+      
+      // All returned trucks should have at least one of the specified cuisines
+      data.forEach(truck => {
+        const hasMatchingCuisine = truck.cuisine_type.some((cuisine: string) => 
+          cuisineFilter.includes(cuisine)
+        );
+        expect(hasMatchingCuisine).toBeTruthy();
+      });
+    });
+
+    test('should filter food trucks by name search', async () => {
+      const searchName = 'Test Truck';
+      
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .ilike('name', `%${searchName}%`);
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(Array.isArray(data)).toBeTruthy();
+      
+      data.forEach(truck => {
+        expect(truck.name.toLowerCase()).toContain(searchName.toLowerCase());
+      });
+    });
+  });
+
+  describe('UPDATE operations', () => {
+    test('should update a food truck', async () => {
+      if (!testTruckId) {
+        throw new Error('testTruckId not set - CREATE test must run first');
+      }
+
+      const updatedData = {
+        description: 'Updated description for testing',
+        cuisine_type: ['american', 'burger'],
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .update(updatedData)
+        .eq('id', testTruckId)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+      expect(data.description).toBe(updatedData.description);
+      expect(data.cuisine_type).toEqual(updatedData.cuisine_type);
+    });
+
+    test('should update food truck operating hours', async () => {
+      if (!testTruckId) {
+        throw new Error('testTruckId not set - CREATE test must run first');
+      }
+
+      const newOperatingHours = {
+        Friday: { open: '13:00', close: '23:00' },
+        Saturday: { open: '13:00', close: '23:00' }
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .update({ operating_hours: newOperatingHours })
+        .eq('id', testTruckId)
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+      expect(data.operating_hours).toEqual(newOperatingHours);
+    });
+  });
+
+  describe('DELETE operations', () => {
+    test('should delete a food truck', async () => {
+      // Create a new truck to delete (to not interfere with other tests)
+      const newTruck = await DatabaseTestSetup.createTestFoodTruck();
+      
+      const { error } = await supabase
+        .from('food_trucks')
+        .delete()
+        .eq('id', newTruck.id);
+
+      expect(error).toBeNull();
+
+      // Verify it was deleted
+      const { data, error: fetchError } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .eq('id', newTruck.id)
+        .single();
+
+      expect(fetchError).toBeDefined();
+      expect(data).toBeUndefined();
+    });
+  });
+
+  describe('Data validation and constraints', () => {
+    test('should fail to create food truck with invalid rating', async () => {
+      const invalidTruck = {
+        name: `Invalid Truck ${Date.now()}`,
+        description: 'Truck with invalid data',
+        average_rating: 10, // Invalid - should be 0-5
+        cuisine_type: ['invalid'],
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4194, 37.7749]
+        },
+        contact_info: {},
+        operating_hours: {},
+        menu_items: [],
+        social_media: {}
+      };
+
+      const { error } = await supabase
+        .from('food_trucks')
+        .insert([invalidTruck]);
+
+      expect(error).toBeDefined();
+    });
+
+    test('should properly validate cuisine type constraint', async () => {
+      const validCuisines = ['mexican', 'italian', 'asian'];
+      const newTruck = {
+        name: `Cuisine Test Truck ${Date.now()}`,
+        description: 'Truck to test cuisine validation',
+        cuisine_type: validCuisines,
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4194, 37.7749]
+        },
+        contact_info: {},
+        operating_hours: {},
+        menu_items: [],
+        social_media: {}
+      };
+
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([newTruck])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.cuisine_type).toEqual(validCuisines);
+    });
+  });
+
+  describe('Performance and indexing', () => {
+    test('should efficiently query by indexes', async () => {
+      // Test name index performance
+      const startTime = Date.now();
+      const { error: nameError } = await supabase
+        .from('food_trucks')
+        .select('id, name')
+        .ilike('name', '%Test%')
+        .limit(10);
+      const nameQueryTime = Date.now() - startTime;
+      
+      expect(nameError).toBeNull();
+      expect(nameQueryTime).toBeLessThan(2000); // Should complete in under 2 seconds
+      
+      // Test cuisine type index performance (GIN index)
+      const startTime2 = Date.now();
+      const { error: cuisineError } = await supabase
+        .from('food_trucks')
+        .select('id, name')
+        .overlaps('cuisine_type', ['test'])
+        .limit(10);
+      const cuisineQueryTime = Date.now() - startTime2;
+      
+      expect(cuisineError).toBeNull();
+      expect(cuisineQueryTime).toBeLessThan(2000); // Should complete in under 2 seconds
+    });
+  });
+});

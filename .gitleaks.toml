@@ -1,0 +1,90 @@
+title = "TruckFull Gitleaks Config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "env-file-with-secrets"
+description = "Environment file with potential secrets"
+# The value must be a literal token followed by a terminator. This keeps
+# literal values (quoted, JSON-style, and end-of-line environment entries)
+# detectable while expression values such as `decodeURIComponent(url.password)`
+# no longer match: `(` and `.` cannot terminate a value, so identifier
+# prefixes cannot be mistaken for secrets.
+regex = '''(?i)(api_key|secret|token|password|private_key|auth_key|credentials)\s*[=:]\s*['"]?([A-Za-z0-9_\-]{16,})['"]?(?:$|[^A-Za-z0-9_(.])'''
+secretGroup = 2
+tags = ["env", "secret"]
+
+    [[rules.allowlists]]
+    description = "Ignore the env-backed Upstash test restoration"
+    condition = "AND"
+    regexTarget = "line"
+    regexes = [
+      '''process\.env\.UPSTASH_REDIS_REST_TOKEN\s*=\s*originalUpstashToken''',
+    ]
+    paths = [
+      '''__tests__/proxy\.event-detail-auth-fast-path\.test\.ts''',
+      '''__tests__/gitleaks-allowlist\.test\.ts''',
+    ]
+
+[[rules]]
+id = "hardcoded-supabase-url"
+description = "Hardcoded Supabase URL"
+regex = '''https://[a-z]{20}\.supabase\.co'''
+tags = ["supabase", "url"]
+
+    [[rules.allowlists]]
+    description = "Verified public production Supabase URL in tracked Wrangler deployment config (the project rules Deployment Configuration Exception)"
+    condition = "AND"
+    regexTarget = "match"
+    regexes = [
+      '''https://exampleprodref000000\.supabase\.co''',
+    ]
+    paths = [
+      '''wrangler\.container-production\.jsonc''',
+    ]
+
+# Global allowlist: generic exclusions that apply repo-wide (test fixtures,
+# generated output, docs templates, and non-secret code patterns). Kept as a
+# top-level [[allowlists]] entry for compatibility with the modern schema.
+[[allowlists]]
+description = "Global allowlist"
+regexTarget = "match"
+paths = [
+  '''\.env\.example''',
+  '''\.env\.local\.example''',
+  '''\.env\.template''',
+  '''node_modules/.*''',
+  '''\.next/.*''',
+  '''coverage/.*''',
+  '''playwright-report/.*''',
+  '''test-results/.*''',
+  '''\.scannerwork/.*''',
+  '''sonar-report\.json''',
+  '''supabase/migrations/.*''',
+  '''\\.gitleaks\\.toml''',
+  '''indexnow-key\\.txt''',
+]
+regexes = [
+  '''test-password-123''',
+  '''TEST_USER_PASSWORD''',
+  '''(?i)test[_-]?key''',
+  '''(?i)test[_-]?secret''',
+  '''(?i)^fake[_-]''',
+  '''(?i)^example[_-]''',
+  '''(?i)your[_-]?key''',
+  '''(?i)your-(?:db-)?password''',
+  '''(?i)your-(?:dev|staging|prod(?:uction)?)-project-ref''',
+  '''(?i)placeholder''',
+  '''(?i)xxx+''',
+  '''(?i)sk_live_xyz789''',
+  '''supabase-demo''',
+  '''process\.env\.[A-Z_]+''',
+  '''import\.meta\.env\.[A-Z_]+''',
+  '''(?i)token\s*[=:]\s*encrypt(?:ing|ed)?(?:FacebookBusiness|Access)?Token''',
+  '''(?i)Token\s*=\s*encrypt(?:ing|ed)?(?:FacebookBusiness|Access)?Token''',
+  '''(?i)token\s*[=:]\s*(?:encrypt|decrypt)(?:ing|ed)?(?:FacebookBusiness|Access|Page)?Token''',
+]
+stopwords = [
+  '''indexnow''',
+]

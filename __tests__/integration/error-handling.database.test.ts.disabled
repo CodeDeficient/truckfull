@@ -1,0 +1,521 @@
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { DatabaseTestSetup } from './database.test.setup';
+
+describe('Error Handling and Edge Cases Tests', () => {
+  const supabase = getSupabaseAdmin();
+  let testUserId: string;
+  let testTruckId: string;
+
+  beforeAll(async () => {
+    await DatabaseTestSetup.cleanupTestData();
+    
+    // Create a test user and food truck for error testing
+    const testUser = await DatabaseTestSetup.createTestUser();
+    testUserId = testUser.id;
+    
+    const testTruck = await DatabaseTestSetup.createTestFoodTruck();
+    testTruckId = testTruck.id;
+  });
+
+  afterAll(async () => {
+    await DatabaseTestSetup.cleanupTestData();
+  });
+
+  describe('Database Connection Errors', () => {
+    test('should handle connection timeout gracefully', async () => {
+      // This test simulates timeout handling - in a real scenario we'd have a way to simulate timeout
+      // For now, we'll verify that normal operations work as expected
+      const { error } = await supabase
+        .from('food_trucks')
+        .select('id')
+        .limit(1);
+
+      // Should not have a connection error in normal circumstances
+      expect(error).toBeNull();
+    });
+
+    test('should handle invalid queries gracefully', async () => {
+      // Try a query with non-existent column (if Supabase allows this kind of error)
+      const { error } = await supabase
+        .from('food_trucks')
+        .select('non_existent_column')
+        .limit(1);
+
+      // This might or might not return an error depending on Supabase behavior
+      // The important thing is that it doesn't crash the application
+    });
+  });
+
+  describe('Input Validation Edge Cases', () => {
+    test('should handle extremely long text fields', async () => {
+      const longText = 'A'.repeat(10000); // 10,000 character string
+      
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([{
+          name: `Long Text Truck ${Date.now()}`,
+          description: longText,
+          cuisine_type: ['test'],
+          current_location: {
+            type: 'Point',
+            coordinates: [-122.4194, 37.7749]
+          },
+          contact_info: {},
+          operating_hours: {},
+          menu_items: [],
+          social_media: {}
+        }])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.description).toHaveLength(10000);
+    });
+
+    test('should handle extremely large JSON fields', async () => {
+      const largeJson = {
+        data: Array.from({ length: 1000 }, (_, i) => ({ id: i, value: `item-${i}` }))
+      };
+      
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([{
+          name: `Large JSON Truck ${Date.now()}`,
+          description: 'Truck with large JSON data',
+          cuisine_type: ['test'],
+          current_location: {
+            type: 'Point',
+            coordinates: [-122.4194, 37.7749]
+          },
+          contact_info: largeJson,
+          operating_hours: {},
+          menu_items: [],
+          social_media: {}
+        }])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.contact_info).toEqual(largeJson);
+    });
+
+    test('should handle empty string values', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([{
+          name: '', // Empty string
+          description: '',
+          cuisine_type: [],
+          current_location: {
+            type: 'Point',
+            coordinates: [-122.4194, 37.7749]
+          },
+          contact_info: {},
+          operating_hours: {},
+          menu_items: [],
+          social_media: {}
+        }])
+        .select()
+        .single();
+
+      // The behavior depends on whether the table allows empty strings
+      // If name is NOT NULL and has no default, this should fail
+      if (error) {
+        expect(error).toBeDefined();
+      } else {
+        expect(data).toBeDefined();
+        expect(data.name).toBe('');
+      }
+    });
+
+    test('should handle null values properly', async () => {
+      const { error } = await supabase
+        .from('food_trucks')
+        .insert([{
+          name: null, // This should cause an error since name is NOT NULL
+          description: 'Test with null name',
+          cuisine_type: ['test'],
+          current_location: {
+            type: 'Point',
+            coordinates: [-122.4194, 37.7749]
+          },
+          contact_info: {},
+          operating_hours: {},
+          menu_items: [],
+          social_media: {}
+        }]);
+
+      expect(error).toBeDefined();
+    });
+  });
+
+  describe('Boundary Value Testing', () => {
+    test('should handle minimum and maximum rating values', async () => {
+      // Test minimum rating
+      const { data: minRating, error: minError } = await supabase
+        .from('reviews')
+        .insert([{
+          truck_id: testTruckId,
+          user_id: testUserId,
+          rating: 1,
+          comment: 'Minimum rating'
+        }])
+        .select()
+        .single();
+
+      expect(minError).toBeNull();
+      expect(minRating).toBeDefined();
+      expect(minRating.rating).toBe(1);
+
+      // Test maximum rating
+      const { data: maxRating, error: maxError } = await supabase
+        .from('reviews')
+        .insert([{
+          truck_id: testTruckId,
+          user_id: testUserId,
+          rating: 5,
+          comment: 'Maximum rating'
+        }])
+        .select()
+        .single();
+
+      expect(maxError).toBeNull();
+      expect(maxRating).toBeDefined();
+      expect(maxRating.rating).toBe(5);
+    });
+
+    test('should handle extreme numeric values', async () => {
+      const largeAmount = 999999.99;
+      const smallAmount = 0.01;
+      
+      // Test large total amount
+      const { data: largeOrder, error: largeError } = await supabase
+        .from('orders')
+        .insert([{
+          order_id: `LARGE-${Date.now()}`,
+          user_id: testUserId,
+          truck_id: testTruckId,
+          status: 'pending',
+          items: [],
+          total_amount: largeAmount,
+          customer_name: 'Large Amount Test'
+        }])
+        .select()
+        .single();
+
+      expect(largeError).toBeNull();
+      expect(largeOrder).toBeDefined();
+      expect(largeOrder.total_amount).toBe(largeAmount);
+
+      // Test small total amount
+      const { data: smallOrder, error: smallError } = await supabase
+        .from('orders')
+        .insert([{
+          order_id: `SMALL-${Date.now()}`,
+          user_id: testUserId,
+          truck_id: testTruckId,
+          status: 'pending',
+          items: [],
+          total_amount: smallAmount,
+          customer_name: 'Small Amount Test'
+        }])
+        .select()
+        .single();
+
+      expect(smallError).toBeNull();
+      expect(smallOrder).toBeDefined();
+      expect(smallOrder.total_amount).toBe(smallAmount);
+    });
+  });
+
+  describe('Concurrent Access and Race Conditions', () => {
+    test('should handle concurrent updates to same record', async () => {
+      // Create a test truck to update concurrently
+      const { data: testTruck } = await supabase
+        .from('food_trucks')
+        .insert([{
+          name: `Concurrency Test Truck ${Date.now()}`,
+          description: 'Original description',
+          cuisine_type: ['test'],
+          current_location: {
+            type: 'Point',
+            coordinates: [-122.4194, 37.7749]
+          },
+          contact_info: {},
+          operating_hours: {},
+          menu_items: [],
+          social_media: {}
+        }])
+        .select()
+        .single();
+
+      // Simulate concurrent updates using Promise.all
+      const [update1, update2] = await Promise.all([
+        supabase
+          .from('food_trucks')
+          .update({ description: 'Updated by process 1' })
+          .eq('id', testTruck.id)
+          .select()
+          .single(),
+        supabase
+          .from('food_trucks')
+          .update({ description: 'Updated by process 2' })
+          .eq('id', testTruck.id)
+          .select()
+          .single()
+      ]);
+
+      // Both updates should succeed (last write wins in most cases)
+      expect(update1.error || update2.error).toBeFalsy(); // At least one should succeed
+      
+      // Verify the final state
+      const { data: finalTruck, error } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .eq('id', testTruck.id)
+        .single();
+      
+      expect(error).toBeNull();
+      expect(finalTruck).toBeDefined();
+    }, 10000); // Increase timeout for concurrent operations
+
+    test('should handle concurrent inserts with unique constraints', async () => {
+      const orderId = `CONCURRENT-${Date.now()}`;
+      
+      // Try to insert the same order_id concurrently (should only one succeed)
+      const results = await Promise.allSettled([
+        supabase
+          .from('orders')
+          .insert([{
+            order_id: orderId,
+            user_id: testUserId,
+            truck_id: testTruckId,
+            status: 'pending',
+            items: [],
+            total_amount: 10.00,
+            customer_name: 'Concurrent Test 1'
+          }])
+          .select()
+          .single(),
+        supabase
+          .from('orders')
+          .insert([{
+            order_id: orderId,
+            user_id: testUserId,
+            truck_id: testTruckId,
+            status: 'pending',
+            items: [],
+            total_amount: 15.00,
+            customer_name: 'Concurrent Test 2'
+          }])
+          .select()
+          .single()
+      ]);
+
+      // Check that at least one succeeded and one failed due to unique constraint
+      const succeeded = results.filter(r => r.status === 'fulfilled');
+      const failed = results.filter(r => r.status === 'rejected');
+      
+      // In a perfect world, one would succeed and one would fail
+      // But due to timing, both might fail or both might succeed depending on execution order
+      // The important thing is that the system handles this gracefully
+    }, 10000); // Increase timeout for concurrent operations
+  });
+
+  describe('Resource Limit and Performance Edge Cases', () => {
+    test('should handle large result sets', async () => {
+      // Create multiple food trucks to test large result set handling
+      const trucksToCreate = 50;
+      const trucks = Array.from({ length: trucksToCreate }, (_, i) => ({
+        name: `Bulk Test Truck ${Date.now()}-${i}`,
+        description: `Truck #${i} for bulk test`,
+        cuisine_type: ['bulk-test'],
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4194 + (i * 0.0001), 37.7749 + (i * 0.0001)]
+        },
+        contact_info: {},
+        operating_hours: {},
+        menu_items: [],
+        social_media: {}
+      }));
+
+      const { data: createdTrucks, error } = await supabase
+        .from('food_trucks')
+        .insert(trucks)
+        .select();
+
+      expect(error).toBeNull();
+      expect(createdTrucks).toBeDefined();
+      expect(Array.isArray(createdTrucks)).toBeTruthy();
+      expect(createdTrucks.length).toBe(trucksToCreate);
+
+      // Now query a large result set
+      const { data: allTrucks, error: queryError } = await supabase
+        .from('food_trucks')
+        .select('*')
+        .ilike('name', `Bulk Test Truck ${Date.now()}%`);
+
+      expect(queryError).toBeNull();
+      expect(allTrucks).toBeDefined();
+      expect(Array.isArray(allTrucks)).toBeTruthy();
+      expect(allTrucks.length).toBe(trucksToCreate);
+    }, 30000); // Increase timeout for bulk operations
+
+    test('should handle complex nested queries', async () => {
+      // Create related data for complex query testing
+      const { data: review } = await supabase
+        .from('reviews')
+        .insert([{
+          truck_id: testTruckId,
+          user_id: testUserId,
+          rating: 5,
+          comment: 'Complex query test review'
+        }])
+        .select()
+        .single();
+
+      // Perform complex query involving multiple joins/relations
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .select(`
+          id,
+          name,
+          description,
+          reviews (
+            id,
+            rating,
+            comment,
+            created_at
+          )
+        `)
+        .eq('id', testTruckId)
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.id).toBe(testTruckId);
+      expect(Array.isArray(data.reviews)).toBeTruthy();
+    });
+  });
+
+  describe('Authentication and Authorization Edge Cases', () => {
+    test('should handle unauthorized access attempts', async () => {
+      // This test verifies that database-level security is working
+      // Since we're using the admin client, we can't directly test auth failures
+      // But we can verify that row-level security policies are in place
+      
+      // Check that we can query the RLS policies (this is more of a verification test)
+      const { data, error } = await supabase
+        .from('information_schema.tables')
+        .select('*')
+        .eq('table_name', 'food_trucks')
+        .limit(1);
+
+      // The important thing is that the operation completes without crashing
+      expect(error).toBeNull();
+    });
+  });
+
+  describe('Data Type Edge Cases', () => {
+    test('should handle different numeric formats', async () => {
+      const { data, error } = await supabase
+        .from('food_trucks')
+        .insert([{
+          name: `Numeric Format Truck ${Date.now()}`,
+          description: 'Testing various numeric formats',
+          cuisine_type: ['test'],
+          current_location: {
+            type: 'Point',
+            coordinates: [-122.4194123456789, 37.7749123456789] // High precision
+          },
+          contact_info: {},
+          operating_hours: {},
+          menu_items: [],
+          social_media: {},
+          data_quality_score: 0.854321 // High precision decimal
+        }])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(typeof data.data_quality_score).toBe('number');
+    });
+
+    test('should handle different timestamp formats', async () => {
+      const now = new Date();
+      const future = new Date(now.getTime() + 86400000); // 24 hours in the future
+
+      const { data, error } = await supabase
+        .from('orders')
+        .insert([{
+          order_id: `TIMESTAMP-${Date.now()}`,
+          user_id: testUserId,
+          truck_id: testTruckId,
+          status: 'pending',
+          items: [],
+          total_amount: 10.00,
+          customer_name: 'Timestamp Test',
+          estimated_delivery: future.toISOString()
+        }])
+        .select()
+        .single();
+
+      expect(error).toBeNull();
+      expect(data).toBeDefined();
+      expect(data.estimated_delivery).toBeDefined();
+    });
+  });
+
+  describe('Error Recovery and Transaction Handling', () => {
+    test('should handle partial failure scenarios', async () => {
+      // Try to insert multiple records where one will fail
+      const validTruck = {
+        name: `Valid Truck ${Date.now()}`,
+        description: 'Valid truck for partial failure test',
+        cuisine_type: ['test'],
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4194, 37.7749]
+        },
+        contact_info: {},
+        operating_hours: {},
+        menu_items: [],
+        social_media: {}
+      };
+      
+      const invalidTruck = {
+        name: null, // This will fail
+        description: 'Invalid truck',
+        cuisine_type: ['test'],
+        current_location: {
+          type: 'Point',
+          coordinates: [-122.4194, 37.7749]
+        },
+        contact_info: {},
+        operating_hours: {},
+        menu_items: [],
+        social_media: {}
+      };
+
+      // In Supabase, batch inserts are atomic, so if one fails, all fail
+      const { error } = await supabase
+        .from('food_trucks')
+        .insert([validTruck, invalidTruck]);
+
+      expect(error).toBeDefined();
+      
+      // Verify that no records were inserted due to atomicity
+      const { count, error: countError } = await supabase
+        .from('food_trucks')
+        .select('*', { count: 'exact' })
+        .ilike('name', `Valid Truck ${Date.now()}`);
+
+      expect(countError).toBeNull();
+      expect(count).toBe(0);
+    });
+  });
+});

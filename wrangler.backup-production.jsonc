@@ -1,0 +1,53 @@
+{
+  // Scheduled production database backups to the private example-backups R2
+  // bucket. Private credentials are Cloudflare secrets and never appear in this
+  // file; the R2 bucket is reached through the Worker's binding via outbound
+  // interception, so the container holds no object-storage credentials.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "truckfull-backup-production",
+  "main": "worker/backup.mjs",
+  "compatibility_date": "2026-08-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+  },
+  "vars": {
+    "BACKUP_ENABLED": "false",
+  },
+  "r2_buckets": [
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "example-backups",
+    },
+  ],
+  "containers": [
+    {
+      "class_name": "BackupContainer",
+      "image": "./containers/backup/Dockerfile",
+      "image_build_context": ".",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "name": "truckfull-backup-production",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "BackupContainer",
+        "name": "BACKUP_CONTAINER",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "new_sqlite_classes": ["BackupContainer"],
+      "tag": "v1",
+    },
+  ],
+  "triggers": {
+    // Cloudflare weekdays are 1=Sunday..7=Saturday; "0" is rejected at deploy.
+    "crons": ["0 1 * * SUN"],
+  },
+}

@@ -1,0 +1,368 @@
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { RadiusControl } from '@/components/filters/RadiusControl';
+
+describe('RadiusControl', () => {
+  const mockOnChange = jest.fn();
+  const mockOnImmediateChange = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+  });
+
+  describe('Basic Rendering', () => {
+    it('should render with default props', () => {
+      render(<RadiusControl value={20} onChange={mockOnChange} />);
+      
+      expect(screen.getByText('Search Radius')).toBeInTheDocument();
+      expect(screen.getByText('20')).toBeInTheDocument();
+      expect(screen.getByText('miles')).toBeInTheDocument();
+    });
+
+    it('should display singular "mile" for value of 1', () => {
+      render(<RadiusControl value={1} onChange={mockOnChange} />);
+      
+      expect(screen.getByText('1')).toBeInTheDocument();
+      expect(screen.getByText('mile')).toBeInTheDocument();
+    });
+
+    it('should display min and max labels', () => {
+      render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange} 
+          min={5} 
+          max={30}
+        />
+      );
+      
+      expect(screen.getByText('5 mi')).toBeInTheDocument();
+      expect(screen.getByText('30 mi')).toBeInTheDocument();
+    });
+
+    it('should show location warning when hasLocation is false', () => {
+      render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange} 
+          hasLocation={false}
+        />
+      );
+      
+      expect(screen.getByText('Location required for radius filtering')).toBeInTheDocument();
+    });
+  });
+
+  describe('Slider Interaction', () => {
+    it('should update value when slider changes', async () => {
+      const { container } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          debounce={false}
+        />
+      );
+      
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      expect(slider).toBeInTheDocument();
+      
+      // Simulate slider change
+      fireEvent.change(slider, { target: { value: '30' } });
+      
+      expect(mockOnChange).toHaveBeenCalledWith(30);
+    });
+
+    it('should debounce onChange calls by default', async () => {
+      const { container } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          debounceDelay={500}
+        />
+      );
+      
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      
+      // Make rapid changes
+      fireEvent.change(slider, { target: { value: '25' } });
+      fireEvent.change(slider, { target: { value: '30' } });
+      fireEvent.change(slider, { target: { value: '35' } });
+      
+      // onChange should not be called immediately
+      expect(mockOnChange).not.toHaveBeenCalled();
+      
+      // Fast-forward time
+      jest.advanceTimersByTime(500);
+      
+      // Should be called once with the last value
+      expect(mockOnChange).toHaveBeenCalledTimes(1);
+      expect(mockOnChange).toHaveBeenCalledWith(35);
+    });
+
+    it('should call onImmediateChange immediately', () => {
+      const { container } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          onImmediateChange={mockOnImmediateChange}
+        />
+      );
+      
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      
+      fireEvent.change(slider, { target: { value: '25' } });
+      
+      // onImmediateChange should be called right away
+      expect(mockOnImmediateChange).toHaveBeenCalledWith(25);
+      // onChange should still be debounced
+      expect(mockOnChange).not.toHaveBeenCalled();
+    });
+
+    it('should be disabled when hasLocation is false', () => {
+      const { container } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          hasLocation={false}
+        />
+      );
+      
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      expect(slider).toBeDisabled();
+    });
+  });
+
+  describe('Preset Buttons', () => {
+    it('should render preset buttons within range', () => {
+      render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          min={5}
+          max={30}
+        />
+      );
+      
+      // Should show presets that fit within min/max
+      expect(screen.getByText('5mi')).toBeInTheDocument();
+      expect(screen.getByText('10mi')).toBeInTheDocument();
+      expect(screen.getByText('15mi')).toBeInTheDocument();
+      expect(screen.getByText('20mi')).toBeInTheDocument();
+      expect(screen.getByText('25mi')).toBeInTheDocument();
+      expect(screen.getByText('30mi')).toBeInTheDocument();
+      
+      // Should not show preset outside range
+      expect(screen.queryByText('50mi')).not.toBeInTheDocument();
+    });
+
+    it('should call onChange immediately when preset is clicked', () => {
+      render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          debounce={true}
+          debounceDelay={500}
+        />
+      );
+      
+      const preset15 = screen.getByText('15mi');
+      fireEvent.click(preset15);
+      
+      // Should call onChange immediately, not debounced
+      expect(mockOnChange).toHaveBeenCalledWith(15);
+    });
+
+    it('should highlight nearest preset', () => {
+      const { rerender } = render(
+        <RadiusControl 
+          value={19} 
+          onChange={mockOnChange}
+        />
+      );
+      
+      // 20 should be highlighted as nearest
+      const preset20 = screen.getByText('20mi');
+      expect(preset20).toHaveClass('bg-primary');
+      
+      // Change value to be closer to 15
+      rerender(
+        <RadiusControl 
+          value={14} 
+          onChange={mockOnChange}
+        />
+      );
+      
+      const preset15 = screen.getByText('15mi');
+      expect(preset15).toHaveClass('bg-primary');
+    });
+
+    it('should disable preset buttons when hasLocation is false', () => {
+      render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          hasLocation={false}
+        />
+      );
+      
+      const presetButtons = screen.getAllByRole('button');
+      presetButtons.forEach(button => {
+        expect(button).toBeDisabled();
+      });
+    });
+  });
+
+  describe('Visual Feedback', () => {
+    it('should show updating indicator when debouncing', async () => {
+      const { container, rerender } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          debounce={true}
+          debounceDelay={500}
+        />
+      );
+      
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      
+      // Change slider value
+      fireEvent.change(slider, { target: { value: '25' } });
+      
+      // Should show updating indicator
+      await waitFor(() => {
+        expect(screen.getByText('(updating...)')).toBeInTheDocument();
+      });
+      
+      // Fast-forward to complete debounce
+      jest.advanceTimersByTime(500);
+      
+      // Simulate parent updating the value prop after API call
+      rerender(
+        <RadiusControl 
+          value={25} 
+          onChange={mockOnChange}
+          debounce={true}
+          debounceDelay={500}
+        />
+      );
+      
+      // Updating indicator should be gone
+      expect(screen.queryByText('(updating...)')).not.toBeInTheDocument();
+    });
+
+    it('should apply opacity when updating', async () => {
+      const { container } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          debounce={true}
+        />
+      );
+      
+      const valueDisplay = screen.getByText('20');
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      
+      // Initially not updating
+      expect(valueDisplay).not.toHaveClass('opacity-60');
+      
+      // Change slider value
+      fireEvent.change(slider, { target: { value: '25' } });
+      
+      // Should show visual feedback
+      await waitFor(() => {
+        const newValueDisplay = screen.getByText('25');
+        expect(newValueDisplay).toHaveClass('opacity-60');
+      });
+    });
+  });
+
+  describe('Accessibility', () => {
+    it('should have proper ARIA attributes', () => {
+      const { container } = render(
+        <RadiusControl 
+          value={20} 
+          onChange={mockOnChange}
+          min={5}
+          max={50}
+        />
+      );
+      
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      
+      expect(slider).toHaveAttribute('aria-label', 'Search radius in miles');
+      expect(slider).toHaveAttribute('aria-valuemin', '5');
+      expect(slider).toHaveAttribute('aria-valuemax', '50');
+      expect(slider).toHaveAttribute('aria-valuenow', '20');
+      expect(slider).toHaveAttribute('aria-valuetext', '20 miles');
+    });
+
+    it('should have proper label association', () => {
+      const { container } = render(
+        <RadiusControl value={20} onChange={mockOnChange} />
+      );
+      
+      const label = screen.getByText('Search Radius').closest('label');
+      const slider = container.querySelector('#radius-slider');
+      
+      expect(label).toHaveAttribute('for', 'radius-slider');
+      expect(slider).toBeInTheDocument();
+    });
+
+    it('should announce value changes', () => {
+      render(<RadiusControl value={20} onChange={mockOnChange} />);
+      
+      const valueDisplay = screen.getByText('20');
+      
+      expect(valueDisplay).toHaveAttribute('aria-live', 'polite');
+      expect(valueDisplay).toHaveAttribute('aria-atomic', 'true');
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle minimum value of 1', () => {
+      render(
+        <RadiusControl 
+          value={1} 
+          onChange={mockOnChange}
+          min={1}
+        />
+      );
+      
+      expect(screen.getByText('1')).toBeInTheDocument();
+      expect(screen.getByText('mile')).toBeInTheDocument(); // Singular
+    });
+
+    it('should handle maximum value of 50', () => {
+      render(
+        <RadiusControl 
+          value={50} 
+          onChange={mockOnChange}
+          max={50}
+        />
+      );
+      
+      expect(screen.getByText('50')).toBeInTheDocument();
+      expect(screen.getByText('miles')).toBeInTheDocument();
+    });
+
+    it('should sync external value changes', () => {
+      const { rerender } = render(
+        <RadiusControl value={20} onChange={mockOnChange} />
+      );
+      
+      expect(screen.getByText('20')).toBeInTheDocument();
+      
+      // External value change (e.g., from URL sync)
+      rerender(
+        <RadiusControl value={35} onChange={mockOnChange} />
+      );
+      
+      expect(screen.getByText('35')).toBeInTheDocument();
+    });
+  });
+});
