@@ -6,6 +6,12 @@ TruckFull was a food truck discovery site. It listed food trucks, where they wer
 
 **TruckFull is shut down.** On November 19, 2026 every web deployment was taken offline and deleted. The site, the staging site, the daily event pipeline, the search service, the backup jobs and the uptime monitor no longer exist.
 
+### Why it shut down
+
+I was tired of putting in 60+ hours of work every week and getting nowhere with revenue. Users expected their profiles to be kept updated for them automatically, for free, without ever taking the time to claim them. Data partners were only interested in trying to steal the recipe.
+
+If you are interested in actually supporting TruckFull and getting it back up and running, email [support@truckfull.food](mailto:support@truckfull.food). Until then, it is staying dead.
+
 This repository is a fresh snapshot of the final source, without the original commit history (the [work history](#work-history) below records what that history held), published **for reference only**. It is not maintained and it is not accepting contributions. It cannot be run as-is: the hosting setup no longer exists, and the database schema history, internal scripts, operational docs and all account-specific keys were left out. Values that pointed at real accounts are now read from environment variables or replaced with placeholders. `.env.local.example` lists the variables the app reads.
 
 ## What it did
