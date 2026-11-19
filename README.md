@@ -66,9 +66,9 @@ The original repository's history could not be published because it held private
 | Files in the final tree | 4,148 |
 | Jest suites / tests at shutdown | 665 / 8,223 |
 
-Nearly all of this work was done by one developer, Daniel King. Of the 1,097
-pull requests, 1,053 were his; the rest came from dependency and review bots.
-Of the 1,050 issues, 1,032 were his.
+Nearly all of this work was done by one developer, Daniel King, who opened
+1,053 of the 1,097 pull requests and 1,032 of the 1,050 issues. The rest came
+from dependency and review bots.
 
 ### Commits by type
 
